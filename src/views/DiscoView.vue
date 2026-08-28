@@ -41,7 +41,10 @@ const frasesDistintas = computed(
 // que garantiza que el resumen muestre el plan de verdad y no uno viejo: sin
 // esto, cambiar de btrfs a ext4 dejaba los subvolúmenes listados en el resumen.
 watch(
-	() => [store.eleccion.disco, store.eleccion.sistemaArchivos, store.eleccion.cifrar],
+	// Tres fuentes y no un getter que arma un arreglo: un arreglo nuevo en cada
+	// evaluación nunca es igual al anterior, así que el observador se dispara
+	// aunque no haya cambiado nada de lo que mira.
+	[() => store.eleccion.disco, () => store.eleccion.sistemaArchivos, () => store.eleccion.cifrar],
 	() => store.calcularVistaPrevia(),
 	{ immediate: true }
 );

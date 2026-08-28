@@ -26,7 +26,9 @@ use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -61,6 +63,18 @@ const INTERVALO_EVENTOS: Duration = Duration::from_millis(150);
 /// La salida compartida. Escriben el hilo que lee peticiones y el que corre la
 /// instalación, y una línea partida en dos deja el JSON inválido del otro lado.
 type Salida = Arc<Mutex<std::io::Stdout>>;
+
+/// El grupo de procesos de archinstall, para poder cancelarlo.
+///
+/// Se comparte el **identificador**, no el `Child`. Esperar a un `Child` pide
+/// `&mut`, así que tener el `Child` en un mutex obliga a elegir entre dos cosas
+/// igual de malas: dejar el mutex tomado mientras se espera —y entonces
+/// `Cancelar` se queda esperando el mismo mutex y no puede matar nada— o sacar
+/// el `Child` del mutex para esperarlo, y entonces `Cancelar` no encuentra qué
+/// matar. Un número no tiene ese problema: se lee sin bloquear a nadie.
+///
+/// Cero significa que no hay nada corriendo.
+type GrupoProcesos = Arc<AtomicI32>;
 
 fn emitir(salida: &Salida, mensaje: &Mensaje) {
     let Ok(texto) = serde_json::to_string(mensaje) else {
@@ -102,9 +116,13 @@ fn progreso(salida: &Salida, paso: Paso, estado: EstadoPaso, fraccion: Option<f3
 /// Punto de entrada del ayudante.
 pub fn run() -> ! {
     let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
-    // El hijo compartido, para que `Cancelar` lo pueda matar mientras el hilo
-    // principal está bloqueado esperándolo.
-    let hijo: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+    // El grupo de procesos de archinstall, para que `Cancelar` lo pueda matar
+    // mientras el hilo principal está bloqueado esperándolo.
+    let grupo: GrupoProcesos = Arc::new(AtomicI32::new(0));
+    // Si se pidió cancelar. Distingue «archinstall murió por una señal que le
+    // mandamos» de «archinstall murió solo», que son dos mensajes muy distintos
+    // para quien está mirando la pantalla.
+    let cancelado = Arc::new(AtomicBool::new(false));
 
     let (tx, rx) = mpsc::channel::<Peticion>();
 
@@ -113,7 +131,8 @@ pub fn run() -> ! {
     // archinstall, que es justamente lo que hay que matar.
     {
         let salida = Arc::clone(&salida);
-        let hijo = Arc::clone(&hijo);
+        let grupo = Arc::clone(&grupo);
+        let cancelado = Arc::clone(&cancelado);
         std::thread::spawn(move || {
             let entrada = BufReader::new(std::io::stdin());
             for linea in entrada.lines() {
@@ -124,7 +143,7 @@ pub fn run() -> ! {
                 match serde_json::from_str::<Peticion>(&linea) {
                     Ok(p) => {
                         if matches!(p.cuerpo, CuerpoPeticion::Cancelar) {
-                            cancelar(&salida, &hijo);
+                            cancelar(&salida, &grupo, &cancelado);
                             continue;
                         }
                         if tx.send(p).is_err() {
@@ -182,7 +201,7 @@ pub fn run() -> ! {
                         resultado: Resultado::correcto(json!({ "arrancada": true })),
                     },
                 );
-                let resultado = instalar(&salida, &hijo, &plan);
+                let resultado = instalar(&salida, &grupo, &cancelado, &plan);
                 match resultado {
                     Ok(()) => emitir(&salida, &Mensaje::Done { ok: true, error: None }),
                     Err(e) => {
@@ -210,21 +229,32 @@ pub fn run() -> ! {
     std::process::exit(0);
 }
 
-fn cancelar(salida: &Salida, hijo: &Arc<Mutex<Option<Child>>>) {
-    let mut guard = match hijo.lock() {
-        Ok(g) => g,
-        Err(e) => e.into_inner(),
-    };
-    if let Some(proceso) = guard.as_mut() {
-        log(salida, Nivel::Warn, "cancelando la instalación");
-        // `kill` manda SIGKILL. No es amable, y es a propósito: archinstall no
-        // deshace lo hecho ante una señal, así que un SIGTERM «prolijo» sólo
-        // agrega la posibilidad de que se quede colgado en un manejador. El
-        // disco queda a medias en los dos casos, y la interfaz lo dice con esas
-        // palabras.
-        let _ = proceso.kill();
-    } else {
+/// Mata la instalación en curso.
+///
+/// **Al grupo de procesos entero, no sólo a archinstall.** archinstall lanza
+/// `pacstrap`, `parted`, `mkfs` y `grub-install` como hijos suyos: matando sólo
+/// al padre, el `pacstrap` que estaba escribiendo en el disco queda corriendo
+/// huérfano y sigue escribiendo un rato largo después de que la interfaz dijo
+/// que se canceló. Por eso el hijo arranca en su propio grupo (`process_group`)
+/// y acá se manda la señal al grupo, que es lo que significa el PID negativo.
+///
+/// SIGKILL y no SIGTERM: archinstall no deshace nada ante una señal, así que un
+/// SIGTERM «prolijo» sólo agrega la posibilidad de quedarse colgado en un
+/// manejador. El disco queda a medias en los dos casos, y la interfaz lo dice
+/// con esas palabras.
+fn cancelar(salida: &Salida, grupo: &GrupoProcesos, cancelado: &Arc<AtomicBool>) {
+    let pgid = grupo.load(Ordering::SeqCst);
+    if pgid <= 0 {
         log(salida, Nivel::Warn, "no hay nada que cancelar");
+        return;
+    }
+
+    cancelado.store(true, Ordering::SeqCst);
+    log(salida, Nivel::Warn, "cancelando la instalación");
+    // SEGURIDAD: `kill` recibe dos enteros y no toca memoria. El PID negativo es
+    // la forma documentada de señalar a un grupo entero.
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
     }
 }
 
@@ -347,7 +377,8 @@ fn version_archinstall() -> Option<String> {
 /// Corre la instalación de punta a punta.
 fn instalar(
     salida: &Salida,
-    hijo: &Arc<Mutex<Option<Child>>>,
+    grupo: &GrupoProcesos,
+    cancelado: &Arc<AtomicBool>,
     plan: &PlanInstalacion,
 ) -> Result<(), String> {
     // ── Comprobaciones que van antes de tocar nada ──────────────────────────
@@ -496,7 +527,13 @@ fn instalar(
         .env("TERM", "dumb")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // Su propio grupo de procesos. Es lo que permite cancelar de verdad:
+        // archinstall lanza `pacstrap`, `parted` y `mkfs` como hijos suyos, y
+        // matando sólo al padre esos hijos quedan huérfanos escribiendo en el
+        // disco un rato largo después de que la interfaz dijo que se canceló.
+        // Ver `cancelar`.
+        .process_group(0);
 
     let mut proceso = comando
         .spawn()
@@ -505,13 +542,9 @@ fn instalar(
     let stdout = proceso.stdout.take();
     let stderr = proceso.stderr.take();
 
-    {
-        let mut guard = match hijo.lock() {
-            Ok(g) => g,
-            Err(e) => e.into_inner(),
-        };
-        *guard = Some(proceso);
-    }
+    // El PID del hijo es también el identificador de su grupo, porque
+    // `process_group(0)` lo pone como líder de un grupo nuevo.
+    grupo.store(proceso.id() as i32, Ordering::SeqCst);
 
     // Tres hilos leyendo tres flujos: la salida de archinstall, su error, y el
     // archivo de eventos del plugin. Los dos primeros van al registro; el
@@ -532,22 +565,17 @@ fn instalar(
         std::thread::spawn(move || seguir_eventos(&salida, &ruta, &seguir))
     };
 
-    // Esperar. El `Option` se saca del mutex para no tenerlo tomado mientras se
-    // espera: con el lock puesto, `Cancelar` se quedaría esperando el mismo
-    // mutex y no podría matar nada.
-    let estado = {
-        let mut proceso = {
-            let mut guard = match hijo.lock() {
-                Ok(g) => g,
-                Err(e) => e.into_inner(),
-            };
-            guard.take()
-        };
-        match proceso.as_mut() {
-            Some(p) => p.wait().map_err(|e| format!("archinstall falló: {e}"))?,
-            None => return Err("la instalación se canceló".into()),
-        }
-    };
+    // Se espera con el `Child` en la pila y sin ningún lock tomado: lo que
+    // `Cancelar` necesita es el número del grupo, que ya está publicado en el
+    // atómico.
+    let estado = proceso
+        .wait()
+        .map_err(|e| format!("archinstall falló: {e}"))?;
+
+    // El grupo deja de existir en cuanto se recogió al hijo. Ponerlo en cero
+    // enseguida cierra la ventana en la que un `Cancelar` tardío mandaría una
+    // señal a un identificador que el sistema ya puede haber reutilizado.
+    grupo.store(0, Ordering::SeqCst);
 
     seguir.store(false, std::sync::atomic::Ordering::Relaxed);
     let _ = hilo_eventos.join();
@@ -556,12 +584,19 @@ fn instalar(
     }
 
     if !estado.success() {
+        // Se distingue por la bandera y no por el código de salida: una muerte
+        // por señal no trae código, pero tampoco lo trae un archinstall que
+        // paniqueó y recibió un SIGABRT. Decirle «cancelaste» a alguien que no
+        // canceló nada es la peor forma de informar un fallo.
+        if cancelado.load(Ordering::SeqCst) {
+            return Err("la instalación se canceló".to_string());
+        }
         return Err(match estado.code() {
             Some(c) => format!(
                 "archinstall terminó con código {c}. El registro de arriba dice dónde falló; \
                  el detalle completo está en /var/log/archinstall/install.log"
             ),
-            None => "archinstall se interrumpió (la instalación se canceló)".to_string(),
+            None => "archinstall se interrumpió sin terminar".to_string(),
         });
     }
 
@@ -736,6 +771,88 @@ mod tests {
         seguir_eventos(&salida, &ruta, &seguir);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Matar el grupo mata también a los nietos.
+    ///
+    /// Ésta es la propiedad que hace que «cancelar» signifique algo: archinstall
+    /// lanza `pacstrap`, `parted` y `mkfs` como hijos suyos. Antes se mataba
+    /// sólo al proceso de archinstall, y el `pacstrap` que estaba escribiendo en
+    /// el disco seguía corriendo huérfano un rato largo después de que la
+    /// interfaz decía que se había cancelado.
+    ///
+    /// Se prueba con un `sh` que deja un nieto durmiendo: si la señal no llegara
+    /// al grupo, el nieto sobreviviría.
+    #[test]
+    fn cancelar_mata_a_los_nietos_y_no_solo_al_hijo() {
+        let mut hijo = Command::new("sh")
+            .args(["-c", "sleep 60 & echo $! ; wait"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("sh tendría que andar");
+
+        // El PID del nieto, que `sh` imprime antes de esperarlo.
+        let mut nieto_texto = String::new();
+        {
+            use std::io::Read as _;
+            let mut salida = hijo.stdout.take().unwrap();
+            let mut buffer = [0u8; 32];
+            let leidos = salida.read(&mut buffer).unwrap_or(0);
+            nieto_texto.push_str(&String::from_utf8_lossy(&buffer[..leidos]));
+        }
+        let nieto: i32 = nieto_texto.trim().parse().expect("el PID del nieto");
+
+        let grupo: GrupoProcesos = Arc::new(AtomicI32::new(hijo.id() as i32));
+        let cancelado = Arc::new(AtomicBool::new(false));
+        let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
+
+        cancelar(&salida, &grupo, &cancelado);
+        assert!(cancelado.load(Ordering::SeqCst), "no se marcó la cancelación");
+
+        let _ = hijo.wait();
+
+        // Se mira `/proc/<pid>/stat` y no `kill(pid, 0)`.
+        //
+        // `kill(pid, 0)` tiene una carrera que hace fallar el test aunque el
+        // código esté bien: un proceso muerto sigue **existiendo** como zombi
+        // hasta que alguien lo recoge, y su padre acaba de morir, así que hay
+        // que esperar a que lo adopte y lo recoja init. Durante esa ventana
+        // `kill(pid, 0)` devuelve cero y el nieto parece vivo.
+        //
+        // El estado del proceso no tiene esa ambigüedad: `Z` es zombi, o sea ya
+        // muerto. El campo va entre el nombre del ejecutable —que puede tener
+        // paréntesis y espacios adentro— y el resto, así que se corta después
+        // del último `)`.
+        let ruta = format!("/proc/{nieto}/stat");
+        let vive = match std::fs::read_to_string(&ruta) {
+            // Ya no existe: recogido.
+            Err(_) => false,
+            Ok(stat) => match stat.rsplit_once(')') {
+                Some((_, resto)) => resto.split_whitespace().next() != Some("Z"),
+                None => false,
+            },
+        };
+        assert!(!vive, "el nieto {nieto} sobrevivió a la cancelación del grupo");
+    }
+
+    /// Cancelar cuando no hay nada corriendo no puede mandar ninguna señal.
+    ///
+    /// Con el grupo en cero, un `kill(-0, SIGKILL)` señalaría **al grupo del
+    /// propio ayudante**, que es como decir «matate vos y todo lo que te
+    /// rodea». La guarda del cero es lo único que separa las dos cosas.
+    #[test]
+    fn cancelar_sin_nada_corriendo_no_hace_nada() {
+        let grupo: GrupoProcesos = Arc::new(AtomicI32::new(0));
+        let cancelado = Arc::new(AtomicBool::new(false));
+        let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
+
+        cancelar(&salida, &grupo, &cancelado);
+
+        // Y no se marca como cancelada: si se marcara, un fallo posterior de
+        // archinstall se informaría como «la cancelaste vos».
+        assert!(!cancelado.load(Ordering::SeqCst));
     }
 
     #[test]
