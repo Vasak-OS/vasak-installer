@@ -1,11 +1,336 @@
 _version: 1
+# The installer's user-facing text.
+#
+# Two rules, both covered by `tests/locales.rs`:
+#
+#  1. **A value containing `: ` must be quoted.** Without the quotes the parser
+#     reads it as a nested mapping, breaks the whole file, and the plugin
+#     **panics on startup**: the application never opens.
+#  2. Both languages carry the same keys and the same `{0}` placeholders.
+#
+# `t()` does not interpolate: the placeholder is replaced with `interpolar()`
+# from `src/tools/interpolar.ts` — never with a bare `String.replace`, which
+# interprets `$&` and `$'` in the replacement and silently drops data.
 app:
-  nombre: Vasak Application
+  nombre: Install VasakOS
 ventana:
   minimizar: Minimise
   maximizar: Maximise
   cerrar: Close
-inicio:
-  titulo: Hello, VasakOS
-  descripcion: This is the template. Replace this screen with your own.
-  saludo: "Hello, {0}"
+
+comun:
+  siguiente: Continue
+  atras: Back
+  cancelar: Cancel
+  reintentar: Try again
+  cerrar: Close
+  aceptar: OK
+  cargando: Loading…
+  ninguno: None
+  si: "Yes"
+  no: "No"
+  buscar: Search
+  sinResultados: No results
+  requerido: Required
+  opcional: Optional
+  mostrarDetalles: Show details
+  ocultarDetalles: Hide details
+  copiar: Copy
+  copiado: Copied
+
+pasos:
+  bienvenida:
+    titulo: Welcome
+    descripcion: Before we start
+  red:
+    titulo: Network
+    descripcion: Internet connection
+  region:
+    titulo: Region
+    descripcion: Language and time zone
+  teclado:
+    titulo: Keyboard
+    descripcion: Keyboard layout
+  disco:
+    titulo: Disk
+    descripcion: Where it gets installed
+  cuenta:
+    titulo: Account
+    descripcion: Your user and the computer
+  resumen:
+    titulo: Summary
+    descripcion: Review before installing
+  instalacion:
+    titulo: Installation
+    descripcion: In progress
+  fin:
+    titulo: Done
+    descripcion: Installation finished
+
+bienvenida:
+  titulo: Let's install VasakOS
+  # `{0}` is the number of steps.
+  intro: "It's {0} steps, and none of them touches the disk until you confirm."
+  equipo: This computer
+  firmware: Firmware
+  firmwareUefi: UEFI
+  firmwareBios: BIOS (legacy boot)
+  memoria: Memory
+  procesador: Processor
+  # `{0}` is the number of threads.
+  hilos: "{0} threads"
+  virtualizacion: Virtual machine
+  avisoVirtual: >-
+    You're on a virtual machine. Make sure the disk you pick belongs to the
+    machine and isn't shared with the host.
+  avisoMemoriaTitulo: Low memory
+  # `{0}` is the detected memory.
+  avisoMemoria: >-
+    This computer has {0}. VasakOS runs, but under 4 GB the desktop will feel
+    tight.
+  avisoBiosTitulo: Legacy boot
+  avisoBios: >-
+    The computer booted in BIOS mode rather than UEFI. It installs either way,
+    with GRUB on the disk, but if you expected UEFI it's worth checking the
+    firmware settings first.
+
+red:
+  titulo: Internet connection
+  intro: >-
+    VasakOS downloads itself from its repositories as it installs, so you need a
+    connection the whole way through. If it drops halfway, the installation stops
+    and has to start over.
+  conectado: Connected
+  conectadoDetalle: A route to the internet was found. You can continue.
+  desconectado: No connection
+  desconectadoDetalle: >-
+    No route to the internet was found. Connect from the desktop panel — the
+    network icon is at the top right — and come back here.
+  volverAProbar: Check again
+  # `{0}` is the approximate download size.
+  descarga: "The download is around {0}."
+  cuidadoMedido: >-
+    If you're on mobile data or a metered connection, keep that in mind: this
+    can't be paused.
+
+region:
+  titulo: Region and language
+  zonaHoraria: Time zone
+  zonaHorariaAyuda: Sets the system clock and daylight saving.
+  idiomaSistema: System language
+  idiomaSistemaAyuda: >-
+    The language of menus and messages, and the format of dates and numbers.
+  ntp: Sync the clock over the internet
+  ntpAyuda: >-
+    Recommended. Without it the time comes from the computer's own clock, which
+    drifts.
+  sinCatalogo: >-
+    The system list couldn't be read. Type the value by hand; it's used as is.
+
+teclado:
+  titulo: Keyboard layout
+  intro: >-
+    Pick your keyboard layout and try it in the field below. It's the one you'll
+    need to type your password on first boot.
+  distribucion: Layout
+  prueba: Try your keyboard here
+  pruebaPlaceholder: Type something with accents and symbols
+  avisoNoAplica: >-
+    The layout you pick applies to the installed system, not to this window. To
+    really try it out, change it from the desktop panel.
+
+disco:
+  titulo: Where it gets installed
+  intro: Pick the disk. It will be erased completely.
+  sinDiscos: No disk found
+  sinDiscosDetalle: >-
+    There's no disk available to install onto. If the computer has an NVMe drive
+    or a RAID controller, its mode may need changing in the firmware.
+  enUso: In use
+  enUsoDetalle: >-
+    It's mounted right now. Usually that's the medium you booted from; it can't
+    be used.
+  # `{0}` is the minimum size in GiB.
+  muyChico: "Too small: at least {0} GiB are needed"
+  vacio: No partitions
+  # `{0}` is the number of partitions.
+  conParticiones: "{0} partitions"
+  particion: Partition
+  sinFormato: Unformatted
+  sistemaArchivos: File system
+  btrfsNombre: Btrfs
+  btrfsAyuda: >-
+    Recommended. Compresses as it writes, supports snapshots, and keeps separate
+    subvolumes for your home directory and the logs.
+  ext4Nombre: Ext4
+  ext4Ayuda: The best known and the simplest. No snapshots, no compression.
+  xfsNombre: XFS
+  xfsAyuda: Fast with large files. No snapshots.
+  cifrar: Encrypt the disk
+  cifrarAyuda: >-
+    The whole system is encrypted and you type a passphrase at every boot, before
+    the login screen appears.
+  cifrarAvisoTitulo: Lose the passphrase, lose the data
+  cifrarAviso: >-
+    There is no way to recover an encrypted disk without its passphrase. There is
+    no backup copy and no security question.
+  frase: Encryption passphrase
+  frasePlaceholder: Passphrase to unlock the disk
+  fraseRepetir: Repeat the passphrase
+  frasesDistintas: The passphrases don't match
+  zram: Use zram for swap
+  zramAyuda: >-
+    Compresses memory instead of reserving disk space. Recommended, especially
+    with little memory.
+  detalleParticionado: Partitions that will be created
+  seVaAPerder: What will be lost
+  seVaAPerderVacio: The disk is empty.
+  rolEsp: EFI boot partition
+  rolBiosGrub: BIOS boot
+  rolRaiz: System
+  subvolumenes: Subvolumes
+  opcionesMontaje: Mount options
+  cifradaEtiqueta: Encrypted
+
+cuenta:
+  titulo: Your account
+  nombreCompleto: Full name
+  nombreCompletoPlaceholder: What the system should call you
+  usuario: Username
+  usuarioAyuda: >-
+    Lowercase letters, digits, hyphen and underscore. It's the name of your home
+    folder and can't be changed later.
+  contrasena: Password
+  contrasenaRepetir: Repeat the password
+  contrasenasDistintas: The passwords don't match
+  fuerza: Strength
+  fuerzaVacia: No password
+  fuerzaDebil: Weak
+  fuerzaAceptable: Acceptable
+  fuerzaBuena: Good
+  fuerzaAyuda: >-
+    A long phrase is safer than a short word with symbols. Nothing is blocked:
+    it's your call.
+  equipo: Computer name
+  equipoAyuda: This is the name the computer shows on the network.
+  administrador: Let this user administer the system
+  administradorAyuda: >-
+    Recommended. Lets them install software and change system settings by
+    entering their password.
+  rootHabilitado: Enable the root account with its own password
+  rootAyuda: >-
+    Not needed if your user can administer. Leave it off and the root account
+    stays locked, which is what Arch does by default.
+  rootContrasena: Root password
+  rootContrasenaRepetir: Repeat the root password
+  sinAdminNiRootTitulo: Nobody could administer this computer
+  sinAdminNiRoot: >-
+    Your user can't administer and the root account isn't enabled. The system
+    installs, but afterwards you won't be able to install software or change
+    settings without booting from another medium.
+
+resumen:
+  titulo: Before installing
+  intro: Check that everything is right. Confirming starts writing to the disk.
+  # `{0}` is the disk path.
+  avisoTitulo: "Everything on {0} will be erased"
+  aviso: >-
+    This can't be undone and there's no confirmation after this point. If there's
+    anything on that disk you need, close the installer and copy it first.
+  region: Region
+  disco: Disk
+  cuenta: Account
+  sistema: System
+  campoZona: Time zone
+  campoIdioma: Language
+  campoTeclado: Keyboard
+  campoDisco: Disk
+  campoEsquema: Scheme
+  campoEsquemaBorrarTodo: Erase the whole disk
+  campoSistemaArchivos: File system
+  campoCifrado: Encryption
+  campoZram: Swap on zram
+  campoUsuario: User
+  campoNombreCompleto: Full name
+  campoEquipo: Computer
+  campoAdministrador: Can administer
+  campoRoot: Root account
+  rootBloqueada: Locked
+  rootHabilitada: Enabled
+  campoArranque: Boot loader
+  campoPaquetes: Packages
+  # `{0}` is the number of packages.
+  paquetesCantidad: "{0} packages"
+  confirmar: Install now
+  autorizacionTitulo: Authorisation needed
+  autorizacion: >-
+    The installer needs administrator permission to write to the disk. Authorise
+    it and try again.
+  autorizar: Authorise
+
+instalacion:
+  titulo: Installing VasakOS
+  intro: This takes between fifteen minutes and an hour, depending on the connection.
+  noApagues: Don't turn the computer off or close this window.
+  registro: Log
+  # `{0}` is the current step. The interface makes two separate calls.
+  pasoActual: "Step {0}"
+  cancelarTitulo: Cancel the installation?
+  cancelarTexto: >-
+    The disk has already been modified. Cancelling now leaves neither the new
+    system nor what was there before, and you'd have to start from scratch.
+  cancelarConfirmar: Yes, cancel
+  cancelarVolver: Keep installing
+  falloTitulo: The installation failed
+  falloTexto: >-
+    The disk is half-written: it has neither the new system nor what was there
+    before. The log below says where it stopped.
+  falloDetalleTitulo: Error detail
+  falloRegistroCompleto: The full log is at /var/log/archinstall/install.log
+  ayudanteCaidoTitulo: The privileged process was lost
+  ayudanteCaido: >-
+    The process that writes to the disk ended without warning. The installation
+    is interrupted.
+  pasos:
+    particionar: Partitioning the disk
+    montar: Mounting the target
+    espejos: Choosing mirrors
+    sistemaBase: Installing the base system
+    escritorio: Installing the desktop
+    arranque: Setting up boot
+    usuarios: Creating your account
+    configuracion: Applying the configuration
+    vasakos: VasakOS settings
+    cierre: Wrapping up
+
+fin:
+  titulo: VasakOS is installed
+  intro: >-
+    You can restart now. Remember to remove the installation medium once the
+    computer powers off.
+  # `{0}` is the username.
+  primerInicio: "On first boot, log in as {0}."
+  reiniciar: Restart now
+  apagar: Shut down
+  seguirEnVivo: Stay in the live session
+  seguirEnVivoAyuda: >-
+    The live session keeps running. Nothing you do here is saved to the system
+    you just installed.
+  cifradoRecordatorio: >-
+    The disk is encrypted. At every boot you'll type the passphrase before the
+    login screen appears.
+
+errores:
+  vacio: This can't be empty
+  # `{0}` is the maximum length.
+  largo: "At most {0} characters"
+  # `{0}` is the character that isn't allowed.
+  caracter: "The character “{0}” isn't allowed"
+  empiezaMal: It can't start like that
+  terminaMal: It can't end like that
+  reservado: The system already uses that name
+  usuarioEmpiezaMal: It has to start with a lowercase letter or an underscore
+  equipoEmpiezaMal: It can't start with a hyphen
+  equipoTerminaMal: It can't end with a hyphen
+  sinAyudante: Administrator permission couldn't be obtained
+  desconocido: Something unexpected went wrong

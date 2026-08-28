@@ -1,0 +1,757 @@
+//! El ayudante privilegiado: el único proceso que corre como root.
+//!
+//! Se lanza con `pkexec /usr/lib/vasak-installer/vasak-installer-helper` desde
+//! la ventana, y habla NDJSON por entrada y salida estándar. Todo lo que puede
+//! destruir datos pasa por acá y por ningún otro lado.
+//!
+//! ## Por qué un proceso aparte y no la aplicación entera como root
+//!
+//! La aplicación es un WebView completo: un motor de navegador con su JIT, su
+//! red y su pila de imágenes. Correrlo como root para poder llamar a `parted`
+//! es cambiar una superficie de ataque de dos comandos por una de un navegador.
+//! Y hay una razón práctica además de la de seguridad: como root, el plugin de
+//! configuración leería `/root` en vez del perfil de la sesión live, y el
+//! instalador aparecería con otro tema e otros iconos que el escritorio que lo
+//! rodea.
+//!
+//! ## Por qué un solo proceso para todo y no uno por operación
+//!
+//! Un `pkexec` por operación son tantas autorizaciones como operaciones. Con uno
+//! solo, la autorización ocurre una vez —al abrir la ventana— y después el canal
+//! ya está. En el medio live eso no se nota porque la regla de polkit lo
+//! permite sin preguntar, pero el instalador también se puede correr desde un
+//! sistema instalado, y ahí importa.
+
+use std::collections::BTreeSet;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde_json::json;
+
+use crate::archconfig;
+use crate::layout;
+use crate::probe;
+use crate::protocol::{
+    CuerpoPeticion, EstadoPaso, Mensaje, Nivel, Paso, Peticion, PlanInstalacion, Progreso,
+    Resultado,
+};
+use crate::teclado;
+
+/// Dónde se dejan los archivos que lee archinstall.
+///
+/// En `/run` y no en `/tmp`: `/run` es tmpfs con permisos de root desde el
+/// arranque, y `/tmp` en un sistema con el pegajoso puesto todavía permite que
+/// otro usuario cree el directorio antes que nosotras y se quede con él. El
+/// archivo de credenciales tiene la frase de LUKS en claro; no puede depender de
+/// quién llegó primero.
+const DIR_TRABAJO: &str = "/run/vasak-installer";
+
+/// Cuánto se espera entre lecturas del archivo de eventos del plugin.
+///
+/// 150 ms: suficientemente seguido para que la barra se mueva sin saltos y lo
+/// bastante espaciado para no despertar el proceso miles de veces durante una
+/// instalación de media hora.
+const INTERVALO_EVENTOS: Duration = Duration::from_millis(150);
+
+/// La salida compartida. Escriben el hilo que lee peticiones y el que corre la
+/// instalación, y una línea partida en dos deja el JSON inválido del otro lado.
+type Salida = Arc<Mutex<std::io::Stdout>>;
+
+fn emitir(salida: &Salida, mensaje: &Mensaje) {
+    let Ok(texto) = serde_json::to_string(mensaje) else {
+        return;
+    };
+    let mut lock = match salida.lock() {
+        Ok(l) => l,
+        // El mutex envenenado significa que otro hilo paniqueó mientras
+        // escribía. Se sigue igual: perder un mensaje de progreso es mejor que
+        // matar la instalación en curso.
+        Err(e) => e.into_inner(),
+    };
+    let _ = writeln!(lock, "{texto}");
+    let _ = lock.flush();
+}
+
+fn log(salida: &Salida, nivel: Nivel, linea: impl Into<String>) {
+    emitir(
+        salida,
+        &Mensaje::Log {
+            nivel,
+            linea: linea.into(),
+        },
+    );
+}
+
+fn progreso(salida: &Salida, paso: Paso, estado: EstadoPaso, fraccion: Option<f32>, detalle: Option<String>) {
+    emitir(
+        salida,
+        &Mensaje::Progress(Progreso {
+            paso,
+            estado,
+            fraccion,
+            detalle,
+        }),
+    );
+}
+
+/// Punto de entrada del ayudante.
+pub fn run() -> ! {
+    let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
+    // El hijo compartido, para que `Cancelar` lo pueda matar mientras el hilo
+    // principal está bloqueado esperándolo.
+    let hijo: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+
+    let (tx, rx) = mpsc::channel::<Peticion>();
+
+    // Un hilo para la entrada. `Cancelar` lo atiende él mismo: si esperara al
+    // hilo principal, no llegaría nunca —el principal está esperando a
+    // archinstall, que es justamente lo que hay que matar.
+    {
+        let salida = Arc::clone(&salida);
+        let hijo = Arc::clone(&hijo);
+        std::thread::spawn(move || {
+            let entrada = BufReader::new(std::io::stdin());
+            for linea in entrada.lines() {
+                let Ok(linea) = linea else { break };
+                if linea.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Peticion>(&linea) {
+                    Ok(p) => {
+                        if matches!(p.cuerpo, CuerpoPeticion::Cancelar) {
+                            cancelar(&salida, &hijo);
+                            continue;
+                        }
+                        if tx.send(p).is_err() {
+                            break;
+                        }
+                    }
+                    // Una línea que no parsea se registra y se descarta. No
+                    // puede cortar el canal: archinstall y pacman escriben en la
+                    // misma terminal, y un `print` perdido de una dependencia no
+                    // puede matar una instalación de media hora.
+                    Err(e) => log(&salida, Nivel::Warn, format!("petición ilegible: {e}")),
+                }
+            }
+            // La ventana cerró. Sin nadie a quien contestarle, el ayudante no
+            // tiene razón de seguir corriendo como root.
+            std::process::exit(0);
+        });
+    }
+
+    for peticion in rx {
+        match peticion.cuerpo {
+            CuerpoPeticion::SondearDiscos => {
+                let resultado = match probe::sondear_discos() {
+                    Ok(mut discos) => {
+                        // Con root ya disponible, se le pone nombre a lo que hay
+                        // en el disco: el resumen puede decir «vas a borrar un
+                        // Windows 11» en lugar de «una partición ntfs».
+                        probe::anotar_sistemas_operativos(&mut discos);
+                        Resultado::correcto(json!({ "discos": discos }))
+                    }
+                    Err(e) => Resultado::fallido(e),
+                };
+                emitir(
+                    &salida,
+                    &Mensaje::Reply {
+                        id: peticion.id,
+                        resultado,
+                    },
+                );
+            }
+            CuerpoPeticion::SondearSistema => {
+                emitir(
+                    &salida,
+                    &Mensaje::Reply {
+                        id: peticion.id,
+                        resultado: Resultado::correcto(json!(probe::sondear_sistema())),
+                    },
+                );
+            }
+            CuerpoPeticion::Instalar(plan) => {
+                emitir(
+                    &salida,
+                    &Mensaje::Reply {
+                        id: peticion.id,
+                        resultado: Resultado::correcto(json!({ "arrancada": true })),
+                    },
+                );
+                let resultado = instalar(&salida, &hijo, &plan);
+                match resultado {
+                    Ok(()) => emitir(&salida, &Mensaje::Done { ok: true, error: None }),
+                    Err(e) => {
+                        log(&salida, Nivel::Error, e.clone());
+                        emitir(
+                            &salida,
+                            &Mensaje::Done {
+                                ok: false,
+                                error: Some(e),
+                            },
+                        );
+                    }
+                }
+                // La instalación es terminal: se haya logrado o no, el disco ya
+                // está tocado y no hay nada más que este proceso pueda hacer.
+                // Salir libera el root en vez de dejarlo esperando.
+                limpiar();
+                std::process::exit(0);
+            }
+            CuerpoPeticion::Cancelar => {} // lo atiende el hilo de entrada
+        }
+    }
+
+    limpiar();
+    std::process::exit(0);
+}
+
+fn cancelar(salida: &Salida, hijo: &Arc<Mutex<Option<Child>>>) {
+    let mut guard = match hijo.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    if let Some(proceso) = guard.as_mut() {
+        log(salida, Nivel::Warn, "cancelando la instalación");
+        // `kill` manda SIGKILL. No es amable, y es a propósito: archinstall no
+        // deshace lo hecho ante una señal, así que un SIGTERM «prolijo» sólo
+        // agrega la posibilidad de que se quede colgado en un manejador. El
+        // disco queda a medias en los dos casos, y la interfaz lo dice con esas
+        // palabras.
+        let _ = proceso.kill();
+    } else {
+        log(salida, Nivel::Warn, "no hay nada que cancelar");
+    }
+}
+
+/// Borra los archivos con secretos.
+///
+/// El de credenciales tiene la frase de LUKS **en claro**, porque cryptsetup
+/// necesita la frase y no un hash. Mientras dura la instalación vive en un tmpfs
+/// que sólo root puede leer; después no tiene por qué existir.
+fn limpiar() {
+    let _ = std::fs::remove_file(Path::new(DIR_TRABAJO).join("credenciales.json"));
+}
+
+/// Escribe un archivo que sólo root puede leer.
+///
+/// El modo va en `OpenOptions` y no en un `chmod` posterior: entre crear el
+/// archivo con el modo por defecto y ajustarlo hay una ventana en la que
+/// cualquiera lo puede abrir, y el que se abre en esa ventana queda abierto
+/// aunque después se cambien los permisos.
+fn escribir_privado(ruta: &Path, contenido: &str) -> Result<(), String> {
+    let mut archivo = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(ruta)
+        .map_err(|e| format!("no se pudo crear {}: {e}", ruta.display()))?;
+    archivo
+        .write_all(contenido.as_bytes())
+        .map_err(|e| format!("no se pudo escribir {}: {e}", ruta.display()))
+}
+
+/// Convierte una contraseña en el hash que va al archivo de credenciales.
+///
+/// `openssl passwd -6` produce un hash SHA-512 crypt, que es lo que aceptan
+/// `useradd -p` y `chpasswd -e`, y por lo tanto lo que archinstall pone tal cual
+/// en `/etc/shadow`.
+///
+/// **La contraseña va por entrada estándar, nunca por argumento.**
+/// `/proc/<pid>/cmdline` lo puede leer cualquier usuario del sistema, así que
+/// una contraseña en `argv` es una contraseña publicada mientras el proceso vive.
+/// Es el mismo patrón que usa la página de Usuarios de vasak-settings.
+///
+/// Se rechazan los caracteres de control porque `-stdin` lee **una sola línea**:
+/// un `\n` en el medio haría hashear algo distinto de lo que la persona tipeó, y
+/// después no podría entrar con su propia contraseña. Espacios y acentos sí se
+/// aceptan.
+fn hashear(contrasena: &str) -> Result<String, String> {
+    if contrasena.is_empty() {
+        return Err("la contraseña está vacía".into());
+    }
+    if contrasena.chars().any(|c| c.is_control()) {
+        return Err("la contraseña tiene caracteres de control".into());
+    }
+
+    let mut hijo = Command::new("openssl")
+        .args(["passwd", "-6", "-stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("no se pudo ejecutar openssl: {e}"))?;
+
+    {
+        let entrada = hijo
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "openssl no aceptó entrada".to_string())?;
+        entrada
+            .write_all(contrasena.as_bytes())
+            .map_err(|e| format!("no se pudo pasar la contraseña a openssl: {e}"))?;
+        entrada
+            .write_all(b"\n")
+            .map_err(|e| format!("no se pudo pasar la contraseña a openssl: {e}"))?;
+    }
+
+    let salida = hijo
+        .wait_with_output()
+        .map_err(|e| format!("openssl falló: {e}"))?;
+    if !salida.status.success() {
+        return Err(format!(
+            "openssl falló: {}",
+            String::from_utf8_lossy(&salida.stderr).trim()
+        ));
+    }
+
+    let hash = String::from_utf8_lossy(&salida.stdout).trim().to_string();
+    // El prefijo confirma que salió un SHA-512 crypt y no, por ejemplo, el
+    // mensaje de uso de openssl por un cambio de sus argumentos. Sin esta
+    // comprobación, un hash inválido se escribe en /etc/shadow y la cuenta
+    // queda sin poder entrar, que es lo peor que puede pasarle a una
+    // instalación que por lo demás funcionó.
+    if !hash.starts_with("$6$") {
+        return Err("openssl no devolvió un hash SHA-512".into());
+    }
+    Ok(hash)
+}
+
+/// La versión de archinstall instalada, para estampar el archivo de
+/// configuración.
+///
+/// Se le pregunta al módulo de Python y no a `pacman`: el paquete y el módulo
+/// pueden no coincidir si alguien lo instaló con pip, y lo que importa es el que
+/// va a leer el archivo.
+fn version_archinstall() -> Option<String> {
+    let salida = Command::new("python3")
+        .args(["-c", "import archinstall; print(archinstall.__version__)"])
+        .output()
+        .ok()?;
+    if !salida.status.success() {
+        return None;
+    }
+    let v = String::from_utf8_lossy(&salida.stdout).trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// Corre la instalación de punta a punta.
+fn instalar(
+    salida: &Salida,
+    hijo: &Arc<Mutex<Option<Child>>>,
+    plan: &PlanInstalacion,
+) -> Result<(), String> {
+    // ── Comprobaciones que van antes de tocar nada ──────────────────────────
+    //
+    // Todo lo que puede fallar por datos se comprueba acá, con el disco
+    // intacto. Un error después del primer `mkfs` no se puede deshacer, así que
+    // cada cosa que se pueda saber antes se sabe antes.
+
+    let mut discos = probe::sondear_discos()?;
+    probe::anotar_sistemas_operativos(&mut discos);
+    let disco = discos
+        .iter()
+        .find(|d| d.ruta == plan.disco)
+        .ok_or_else(|| format!("el disco {} ya no está", plan.disco))?;
+
+    let firmware = probe::detectar_firmware();
+    let particiones = layout::planificar(disco, firmware, plan.sistema_archivos, plan.cifrar)
+        .map_err(|e| e.to_string())?;
+
+    let hash_usuario = hashear(&plan.secretos.usuario)?;
+    let hash_root = if plan.root_habilitado {
+        Some(hashear(&plan.secretos.root)?)
+    } else {
+        None
+    };
+    if plan.cifrar && plan.secretos.cifrado.is_empty() {
+        return Err("se pidió cifrado pero no hay frase".into());
+    }
+
+    let ruta_paquetes = archconfig::ruta_paquetes()
+        .ok_or_else(|| "no se encontró paquetes.txt".to_string())?;
+    let paquetes = archconfig::leer_paquetes(
+        &std::fs::read_to_string(&ruta_paquetes)
+            .map_err(|e| format!("no se pudo leer {}: {e}", ruta_paquetes.display()))?,
+    );
+    if paquetes.is_empty() {
+        return Err(format!("{} no tiene ningún paquete", ruta_paquetes.display()));
+    }
+
+    let ruta_plugin =
+        archconfig::ruta_plugin().ok_or_else(|| "no se encontró el plugin de archinstall".to_string())?;
+
+    // ── Los archivos que lee archinstall ───────────────────────────────────
+
+    std::fs::create_dir_all(DIR_TRABAJO)
+        .map_err(|e| format!("no se pudo crear {DIR_TRABAJO}: {e}"))?;
+    // 0700 explícito: `create_dir_all` respeta el umask, y con un umask permisivo
+    // el directorio que contiene las credenciales quedaría legible.
+    std::fs::set_permissions(DIR_TRABAJO, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .map_err(|e| format!("no se pudieron ajustar los permisos de {DIR_TRABAJO}: {e}"))?;
+
+    let dir = PathBuf::from(DIR_TRABAJO);
+    let ruta_config = dir.join("configuracion.json");
+    let ruta_creds = dir.join("credenciales.json");
+    let ruta_eventos = dir.join("eventos.ndjson");
+
+    let config = archconfig::configuracion(
+        plan,
+        &particiones,
+        disco.sector_logico,
+        firmware,
+        &paquetes,
+        version_archinstall().as_deref(),
+    );
+    let creds = archconfig::credenciales(
+        plan,
+        &hash_usuario,
+        hash_root.as_deref(),
+        if plan.cifrar {
+            Some(plan.secretos.cifrado.as_str())
+        } else {
+            None
+        },
+    );
+
+    escribir_privado(
+        &ruta_config,
+        &serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
+    )?;
+    escribir_privado(
+        &ruta_creds,
+        &serde_json::to_string_pretty(&creds).map_err(|e| e.to_string())?,
+    )?;
+    // Vaciarlo antes de arrancar: si quedó el de una instalación anterior, el
+    // seguidor leería su progreso viejo como si fuera el de ahora.
+    escribir_privado(&ruta_eventos, "")?;
+
+    // El diseño de XKB, para que el escritorio arranque con el teclado que la
+    // persona eligió y no con `us`. Va por variable de entorno al plugin.
+    let (xkb, variante) = match teclado::traducir(&plan.teclado, &teclado::diseños_de_xkb()) {
+        Ok(par) => par,
+        Err(respaldo) => {
+            log(
+                salida,
+                Nivel::Warn,
+                format!(
+                    "el teclado «{}» no tiene diseño de XKB conocido; el escritorio arranca con «{}»",
+                    plan.teclado, respaldo.0
+                ),
+            );
+            respaldo
+        }
+    };
+
+    for paso in Paso::TODOS {
+        progreso(salida, *paso, EstadoPaso::Pendiente, None, None);
+    }
+
+    // ── archinstall ────────────────────────────────────────────────────────
+
+    log(
+        salida,
+        Nivel::Info,
+        format!(
+            "instalando en {} ({}), firmware {:?}",
+            plan.disco,
+            plan.sistema_archivos.como_archinstall(),
+            firmware
+        ),
+    );
+
+    let mut comando = Command::new("archinstall");
+    comando
+        .arg("--config")
+        .arg(&ruta_config)
+        .arg("--creds")
+        .arg(&ruta_creds)
+        .arg("--plugin")
+        .arg(&ruta_plugin)
+        .arg("--silent")
+        // El progreso estructurado sale por acá: el plugin escribe NDJSON en
+        // este archivo y nosotras lo seguimos. No se usa la salida estándar de
+        // archinstall para eso porque ahí escriben también pacman y todo lo que
+        // archinstall invoca, y una línea de JSON partida por un `print` ajeno
+        // sería un evento perdido.
+        .env("VASAK_INSTALLER_EVENTOS", &ruta_eventos)
+        .env("VASAK_INSTALLER_XKB", &xkb)
+        .env("VASAK_INSTALLER_XKB_VARIANTE", &variante)
+        .env("VASAK_INSTALLER_NOMBRE_COMPLETO", &plan.nombre_completo)
+        .env("VASAK_INSTALLER_USUARIO", &plan.usuario)
+        // Sin color: archinstall detecta que no hay terminal y no debería
+        // ponerlo, pero algunas de sus dependencias lo ponen igual, y los
+        // códigos de escape ANSI en el registro de la interfaz se ven como
+        // basura.
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut proceso = comando
+        .spawn()
+        .map_err(|e| format!("no se pudo ejecutar archinstall: {e}. ¿Está instalado?"))?;
+
+    let stdout = proceso.stdout.take();
+    let stderr = proceso.stderr.take();
+
+    {
+        let mut guard = match hijo.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        *guard = Some(proceso);
+    }
+
+    // Tres hilos leyendo tres flujos: la salida de archinstall, su error, y el
+    // archivo de eventos del plugin. Los dos primeros van al registro; el
+    // tercero mueve la barra.
+    let mut lectores = Vec::new();
+    if let Some(flujo) = stdout {
+        lectores.push(hilo_de_registro(Arc::clone(salida), flujo, Nivel::Info));
+    }
+    if let Some(flujo) = stderr {
+        lectores.push(hilo_de_registro(Arc::clone(salida), flujo, Nivel::Warn));
+    }
+
+    let seguir = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let hilo_eventos = {
+        let salida = Arc::clone(salida);
+        let seguir = Arc::clone(&seguir);
+        let ruta = ruta_eventos.clone();
+        std::thread::spawn(move || seguir_eventos(&salida, &ruta, &seguir))
+    };
+
+    // Esperar. El `Option` se saca del mutex para no tenerlo tomado mientras se
+    // espera: con el lock puesto, `Cancelar` se quedaría esperando el mismo
+    // mutex y no podría matar nada.
+    let estado = {
+        let mut proceso = {
+            let mut guard = match hijo.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            };
+            guard.take()
+        };
+        match proceso.as_mut() {
+            Some(p) => p.wait().map_err(|e| format!("archinstall falló: {e}"))?,
+            None => return Err("la instalación se canceló".into()),
+        }
+    };
+
+    seguir.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = hilo_eventos.join();
+    for h in lectores {
+        let _ = h.join();
+    }
+
+    if !estado.success() {
+        return Err(match estado.code() {
+            Some(c) => format!(
+                "archinstall terminó con código {c}. El registro de arriba dice dónde falló; \
+                 el detalle completo está en /var/log/archinstall/install.log"
+            ),
+            None => "archinstall se interrumpió (la instalación se canceló)".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Manda al registro cada línea de un flujo del proceso hijo.
+///
+/// Se leen **bytes** y se convierten con `from_utf8_lossy` en vez de usar
+/// `lines()` sobre un lector de texto: pacman escribe barras de progreso con
+/// caracteres de dibujo y a veces corta una secuencia UTF-8 a mitad, y ahí
+/// `lines()` devuelve un error que corta el hilo y deja el resto de la
+/// instalación sin registro.
+fn hilo_de_registro<R: Read + Send + 'static>(
+    salida: Salida,
+    flujo: R,
+    nivel: Nivel,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut lector = BufReader::new(flujo);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            match lector.read_until(b'\n', &mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let texto = String::from_utf8_lossy(&buffer);
+                    let limpio = texto.trim_end_matches(['\n', '\r']).trim();
+                    if !limpio.is_empty() {
+                        log(&salida, nivel, limpio);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+/// Sigue el archivo de eventos del plugin y reenvía lo que aparece.
+///
+/// Es un `tail -f` en veinte líneas. Se mantiene la posición y se relee desde
+/// ahí; una línea incompleta —el plugin escribió la mitad y todavía no llegó el
+/// `\n`— se deja para la próxima vuelta en vez de parsearla, que es de donde
+/// venían los eventos perdidos.
+fn seguir_eventos(salida: &Salida, ruta: &Path, seguir: &std::sync::atomic::AtomicBool) {
+    let mut posicion: u64 = 0;
+    let mut pendiente = String::new();
+
+    loop {
+        let activo = seguir.load(std::sync::atomic::Ordering::Relaxed);
+
+        if let Ok(mut archivo) = std::fs::File::open(ruta) {
+            if archivo.seek(SeekFrom::Start(posicion)).is_ok() {
+                let mut nuevo = String::new();
+                if let Ok(leidos) = archivo.read_to_string(&mut nuevo) {
+                    posicion += leidos as u64;
+                    pendiente.push_str(&nuevo);
+
+                    // Sólo las líneas completas. `split_inclusive` deja la
+                    // última sin `\n` identificable, y ésa es la que se guarda.
+                    while let Some(corte) = pendiente.find('\n') {
+                        let linea: String = pendiente.drain(..=corte).collect();
+                        procesar_evento(salida, linea.trim());
+                    }
+                }
+            }
+        }
+
+        if !activo {
+            // Una vuelta más después de que el proceso terminó, para no perder
+            // los últimos eventos: el plugin escribe el cierre justo antes de
+            // que archinstall salga, y sin esta pasada final el último paso
+            // quedaba mostrándose «en curso» para siempre.
+            break;
+        }
+        std::thread::sleep(INTERVALO_EVENTOS);
+    }
+}
+
+fn procesar_evento(salida: &Salida, linea: &str) {
+    if linea.is_empty() {
+        return;
+    }
+    match serde_json::from_str::<Mensaje>(linea) {
+        Ok(mensaje) => emitir(salida, &mensaje),
+        // El plugin escribe en el mismo archivo que nadie más toca, así que una
+        // línea ilegible es un error del plugin. Se registra con la línea
+        // adentro para poder arreglarlo, y no se corta nada.
+        Err(e) => log(
+            salida,
+            Nivel::Warn,
+            format!("evento ilegible del plugin ({e}): {linea}"),
+        ),
+    }
+}
+
+/// Los diseños de XKB, expuesto para que la ventana pueda validar sin ser root.
+pub fn diseños_conocidos() -> BTreeSet<String> {
+    teclado::diseños_de_xkb()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Contra el `openssl` real: es el que produce el hash que termina en
+    /// `/etc/shadow`, y un cambio en sus argumentos deja la cuenta sin poder
+    /// entrar en un sistema que por lo demás se instaló bien.
+    #[test]
+    fn el_hash_sale_con_formato_sha512() {
+        let hash = hashear("una contraseña con espacios y acentós").expect("openssl tendría que andar");
+        assert!(hash.starts_with("$6$"), "salió «{hash}»");
+        // `$6$` + sal + `$` + hash. Más corto que esto significa que openssl
+        // devolvió otra cosa.
+        assert!(hash.len() > 20, "salió «{hash}»");
+    }
+
+    #[test]
+    fn la_sal_es_distinta_cada_vez() {
+        // Dos hashes iguales para la misma contraseña significan sal fija, y con
+        // sal fija una tabla precalculada sirve para todas las instalaciones.
+        let a = hashear("la misma").unwrap();
+        let b = hashear("la misma").unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn una_contrasena_con_salto_de_linea_se_rechaza() {
+        // `openssl passwd -stdin` lee **una sola línea**: con un `\n` en el
+        // medio hashearía sólo la primera mitad, y la persona no podría entrar
+        // con la contraseña que tipeó.
+        assert!(hashear("mitad\ny la otra mitad").is_err());
+        assert!(hashear("con\ttabulación").is_err());
+        assert!(hashear("").is_err());
+    }
+
+    #[test]
+    fn el_espacio_y_los_acentos_se_aceptan() {
+        // Rechazarlos sería empobrecer las contraseñas por comodidad nuestra.
+        assert!(hashear("contraseña con espacios").is_ok());
+        assert!(hashear("ñandú y coração").is_ok());
+    }
+
+    /// El seguidor de eventos no puede entregar una línea a medio escribir: el
+    /// plugin escribe y el seguidor lee al mismo tiempo, y parsear media línea
+    /// perdía el evento entero.
+    #[test]
+    fn el_seguidor_espera_la_linea_completa() {
+        let dir = std::env::temp_dir().join(format!("vsk-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("eventos.ndjson");
+
+        let uno = serde_json::to_string(&Mensaje::Log {
+            nivel: Nivel::Info,
+            linea: "primero".into(),
+        })
+        .unwrap();
+        let dos = serde_json::to_string(&Mensaje::Log {
+            nivel: Nivel::Info,
+            linea: "segundo".into(),
+        })
+        .unwrap();
+
+        // Una línea completa y la siguiente a medias, como queda el archivo si
+        // se lee justo mientras el plugin escribe.
+        std::fs::write(&ruta, format!("{uno}\n{}", &dos[..dos.len() / 2])).unwrap();
+
+        let seguir = std::sync::atomic::AtomicBool::new(false);
+        // Con `seguir` en falso hace una sola pasada; lo que se comprueba es
+        // que no paniquee con la línea partida y que no la reporte.
+        let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
+        seguir_eventos(&salida, &ruta, &seguir);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn el_archivo_privado_queda_solo_para_root() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vsk-test-priv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("credenciales.json");
+
+        escribir_privado(&ruta, r#"{"secreto":1}"#).unwrap();
+        let modo = std::fs::metadata(&ruta).unwrap().permissions().mode() & 0o777;
+        // 0600 y nada más: este archivo tiene la frase de LUKS en claro. El modo
+        // va en `OpenOptions` justamente para que no haya una ventana entre
+        // crear y ajustar.
+        assert_eq!(modo, 0o600, "quedó en {modo:o}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

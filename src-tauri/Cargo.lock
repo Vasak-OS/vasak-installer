@@ -4019,10 +4019,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "vapp"
+name = "vasak-installer"
 version = "0.1.0"
 dependencies = [
  "gtk",
+ "libc",
  "serde",
  "serde_json",
  "serde_yaml",

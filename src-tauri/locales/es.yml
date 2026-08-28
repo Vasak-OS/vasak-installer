@@ -1,21 +1,337 @@
 _version: 1
-# Un catálogo por idioma, con las claves agrupadas por pantalla o componente.
+# Los textos del instalador.
 #
-# Dos reglas que aprendimos rompiendo cosas:
+# Dos reglas, las dos con test en `tests/locales.rs`:
 #
-#  1. Si el valor contiene `: `, va **entre comillas**. Sin ellas el parser lo
-#     lee como un mapeo anidado y rompe el archivo entero — y el plugin
-#     paniquea al arrancar, así que la aplicación no abre.
-#  2. Los dos idiomas tienen que tener las **mismas claves** y los mismos
-#     marcadores `{0}`. Hay un test que lo verifica.
+#  1. **Si el valor contiene `: `, va entre comillas.** Sin ellas el parser lo lee
+#     como un mapeo anidado, rompe el archivo entero y el plugin **paniquea al
+#     arrancar**: la aplicación no abre.
+#  2. Los dos idiomas tienen las **mismas claves** y los mismos marcadores `{0}`.
+#
+# `t()` no interpola: el marcador se reemplaza con `interpolar()` de
+# `src/tools/interpolar.ts`. Nunca con `String.replace` a mano — interpreta `$&`
+# y `$'` en el reemplazo, y un dato con esos caracteres se pierde.
 app:
-  nombre: Aplicación Vasak
+  nombre: Instalar VasakOS
 ventana:
   minimizar: Minimizar
   maximizar: Maximizar
   cerrar: Cerrar
-inicio:
-  titulo: Hola, VasakOS
-  descripcion: Esta es la plantilla. Reemplazá esta pantalla por la tuya.
-  # `t()` no interpola: el marcador se reemplaza a mano. Ver el README.
-  saludo: "Hola, {0}"
+
+comun:
+  siguiente: Continuar
+  atras: Atrás
+  cancelar: Cancelar
+  reintentar: Reintentar
+  cerrar: Cerrar
+  aceptar: Aceptar
+  cargando: Cargando…
+  ninguno: Ninguno
+  si: Sí
+  no: "No"
+  buscar: Buscar
+  sinResultados: No hay resultados
+  requerido: Obligatorio
+  opcional: Opcional
+  mostrarDetalles: Ver detalles
+  ocultarDetalles: Ocultar detalles
+  copiar: Copiar
+  copiado: Copiado
+
+pasos:
+  bienvenida:
+    titulo: Bienvenida
+    descripcion: Antes de empezar
+  red:
+    titulo: Red
+    descripcion: Conexión a internet
+  region:
+    titulo: Región
+    descripcion: Idioma y zona horaria
+  teclado:
+    titulo: Teclado
+    descripcion: Distribución del teclado
+  disco:
+    titulo: Disco
+    descripcion: Dónde se instala
+  cuenta:
+    titulo: Cuenta
+    descripcion: Tu usuario y el equipo
+  resumen:
+    titulo: Resumen
+    descripcion: Revisá antes de instalar
+  instalacion:
+    titulo: Instalación
+    descripcion: En curso
+  fin:
+    titulo: Listo
+    descripcion: Instalación terminada
+
+bienvenida:
+  titulo: Vamos a instalar VasakOS
+  # `{0}` es la cantidad de pasos.
+  intro: "Son {0} pasos y ninguno toca el disco hasta que lo confirmes."
+  equipo: Este equipo
+  firmware: Firmware
+  firmwareUefi: UEFI
+  firmwareBios: BIOS (arranque heredado)
+  memoria: Memoria
+  procesador: Procesador
+  # `{0}` es la cantidad de hilos.
+  hilos: "{0} hilos"
+  virtualizacion: Máquina virtual
+  avisoVirtual: >-
+    Estás en una máquina virtual. Asegurate de que el disco que elijas sea el de
+    la máquina y no uno compartido con el equipo anfitrión.
+  avisoMemoriaTitulo: Poca memoria
+  # `{0}` es la memoria detectada.
+  avisoMemoria: >-
+    Este equipo tiene {0}. VasakOS funciona, pero con menos de 4 GB el escritorio
+    va a ir justo.
+  avisoBiosTitulo: Arranque heredado
+  avisoBios: >-
+    El equipo arrancó en modo BIOS y no UEFI. Se instala igual, con GRUB en el
+    disco, pero si esperabas UEFI conviene revisar la configuración del firmware
+    antes de seguir.
+
+red:
+  titulo: Conexión a internet
+  intro: >-
+    VasakOS se descarga de sus repositorios mientras se instala, así que hace
+    falta conexión de punta a punta. Si se corta a mitad, la instalación se
+    interrumpe y hay que empezar de nuevo.
+  conectado: Hay conexión
+  conectadoDetalle: Se detectó una ruta a internet. Podés continuar.
+  desconectado: No hay conexión
+  desconectadoDetalle: >-
+    No se detectó ninguna ruta a internet. Conectate desde el panel del
+    escritorio —el ícono de red está arriba a la derecha— y volvé acá.
+  volverAProbar: Volver a comprobar
+  # `{0}` es el tamaño aproximado de la descarga.
+  descarga: "La descarga es de alrededor de {0}."
+  cuidadoMedido: >-
+    Si estás usando datos móviles o una conexión con límite, tenelo en cuenta:
+    esto no se puede pausar.
+
+region:
+  titulo: Región e idioma
+  zonaHoraria: Zona horaria
+  zonaHorariaAyuda: Define la hora del sistema y el horario de verano.
+  idiomaSistema: Idioma del sistema
+  idiomaSistemaAyuda: >-
+    El idioma de los menús, los mensajes y el formato de fechas y números.
+  ntp: Sincronizar la hora por internet
+  ntpAyuda: >-
+    Recomendado. Sin esto la hora se toma del reloj del equipo, que se atrasa.
+  sinCatalogo: >-
+    No se pudo leer la lista del sistema. Escribí el valor a mano; se usa tal
+    cual.
+
+teclado:
+  titulo: Distribución del teclado
+  intro: >-
+    Elegí la distribución de tu teclado y probala en el campo de abajo. Es la que
+    vas a necesitar para escribir tu contraseña en el primer arranque.
+  distribucion: Distribución
+  prueba: Probá tu teclado acá
+  pruebaPlaceholder: Escribí algo con acentos y símbolos
+  avisoNoAplica: >-
+    La distribución elegida se aplica al sistema instalado, no a esta ventana.
+    Para probarla de verdad, cambiala desde el panel del escritorio.
+
+disco:
+  titulo: Dónde se instala
+  intro: Elegí el disco. Se va a borrar por completo.
+  sinDiscos: No se encontró ningún disco
+  sinDiscosDetalle: >-
+    No hay ningún disco en el que se pueda instalar. Si el equipo tiene un disco
+    NVMe o un controlador RAID, puede hacer falta cambiar el modo del controlador
+    en el firmware.
+  enUso: En uso
+  enUsoDetalle: >-
+    Está montado ahora mismo. Suele ser el medio del que arrancaste; no se puede
+    usar.
+  # `{0}` es el tamaño mínimo en GiB.
+  muyChico: "Muy chico: hacen falta al menos {0} GiB"
+  vacio: Sin particiones
+  # `{0}` es la cantidad de particiones.
+  conParticiones: "{0} particiones"
+  particion: Partición
+  sinFormato: Sin formato
+  sistemaArchivos: Sistema de archivos
+  btrfsNombre: Btrfs
+  btrfsAyuda: >-
+    Recomendado. Comprime al escribir, permite instantáneas y usa subvolúmenes
+    separados para el hogar y los registros.
+  ext4Nombre: Ext4
+  ext4Ayuda: El más conocido y el más simple. Sin instantáneas ni compresión.
+  xfsNombre: XFS
+  xfsAyuda: Rápido con archivos grandes. Sin instantáneas.
+  cifrar: Cifrar el disco
+  cifrarAyuda: >-
+    Todo el sistema queda cifrado y hay que escribir una frase en cada arranque,
+    antes de que aparezca la pantalla de inicio de sesión.
+  cifrarAvisoTitulo: Si perdés la frase, perdés los datos
+  cifrarAviso: >-
+    No hay forma de recuperar un disco cifrado sin su frase. No existe una copia
+    ni una pregunta de seguridad.
+  frase: Frase de cifrado
+  frasePlaceholder: Frase para desbloquear el disco
+  fraseRepetir: Repetí la frase
+  frasesDistintas: Las frases no coinciden
+  zram: Usar zram como memoria de intercambio
+  zramAyuda: >-
+    Comprime la memoria en vez de reservar espacio en el disco. Recomendado,
+    sobre todo con poca memoria.
+  detalleParticionado: Particiones que se van a crear
+  seVaAPerder: Se va a perder
+  seVaAPerderVacio: El disco no tiene nada.
+  rolEsp: Partición de arranque EFI
+  rolBiosGrub: Arranque BIOS
+  rolRaiz: Sistema
+  subvolumenes: Subvolúmenes
+  opcionesMontaje: Opciones de montaje
+  cifradaEtiqueta: Cifrada
+
+cuenta:
+  titulo: Tu cuenta
+  nombreCompleto: Nombre completo
+  nombreCompletoPlaceholder: Cómo querés que te llame el sistema
+  usuario: Nombre de usuario
+  usuarioAyuda: >-
+    Minúsculas, números, guion y guion bajo. Es el nombre de tu carpeta personal
+    y no se puede cambiar después.
+  contrasena: Contraseña
+  contrasenaRepetir: Repetí la contraseña
+  contrasenasDistintas: Las contraseñas no coinciden
+  fuerza: Seguridad
+  fuerzaVacia: Sin contraseña
+  fuerzaDebil: Débil
+  fuerzaAceptable: Aceptable
+  fuerzaBuena: Buena
+  fuerzaAyuda: >-
+    Una frase larga es más segura que una palabra corta con símbolos. No se
+    bloquea nada: la decisión es tuya.
+  equipo: Nombre del equipo
+  equipoAyuda: Con este nombre aparece el equipo en la red.
+  administrador: Que este usuario pueda administrar el sistema
+  administradorAyuda: >-
+    Recomendado. Le permite instalar programas y cambiar la configuración del
+    sistema pidiendo su contraseña.
+  rootHabilitado: Habilitar la cuenta de root con su propia contraseña
+  rootAyuda: >-
+    No hace falta si el usuario puede administrar. Dejala apagada y la cuenta de
+    root queda bloqueada, que es lo que hace Arch por defecto.
+  rootContrasena: Contraseña de root
+  rootContrasenaRepetir: Repetí la contraseña de root
+  sinAdminNiRootTitulo: Nadie podría administrar el equipo
+  sinAdminNiRoot: >-
+    Ni tu usuario puede administrar ni la cuenta de root está habilitada. El
+    sistema se instala, pero después no vas a poder instalar programas ni cambiar
+    la configuración sin arrancar desde otro medio.
+
+resumen:
+  titulo: Antes de instalar
+  intro: Revisá que todo esté bien. Al confirmar se empieza a escribir en el disco.
+  # `{0}` es la ruta del disco.
+  avisoTitulo: "Se va a borrar todo el contenido de {0}"
+  aviso: >-
+    Esto no se puede deshacer y no hay confirmación después de este punto. Si hay
+    algo en ese disco que necesitás, cerrá el instalador y copialo primero.
+  region: Región
+  disco: Disco
+  cuenta: Cuenta
+  sistema: Sistema
+  campoZona: Zona horaria
+  campoIdioma: Idioma
+  campoTeclado: Teclado
+  campoDisco: Disco
+  campoEsquema: Esquema
+  campoEsquemaBorrarTodo: Borrar el disco entero
+  campoSistemaArchivos: Sistema de archivos
+  campoCifrado: Cifrado
+  campoZram: Intercambio en zram
+  campoUsuario: Usuario
+  campoNombreCompleto: Nombre completo
+  campoEquipo: Equipo
+  campoAdministrador: Puede administrar
+  campoRoot: Cuenta de root
+  rootBloqueada: Bloqueada
+  rootHabilitada: Habilitada
+  campoArranque: Gestor de arranque
+  campoPaquetes: Paquetes
+  # `{0}` es la cantidad de paquetes.
+  paquetesCantidad: "{0} paquetes"
+  confirmar: Instalar ahora
+  autorizacionTitulo: Falta la autorización
+  autorizacion: >-
+    El instalador necesita permisos de administrador para escribir en el disco.
+    Autorizalo y volvé a intentar.
+  autorizar: Autorizar
+
+instalacion:
+  titulo: Instalando VasakOS
+  intro: Puede tardar entre quince minutos y una hora, según la conexión.
+  noApagues: No apagues el equipo ni cierres esta ventana.
+  registro: Registro
+  # `{0}` es el paso actual, `{1}` el total. La interfaz usa dos llamadas.
+  pasoActual: "Paso {0}"
+  cancelarTitulo: ¿Cancelar la instalación?
+  cancelarTexto: >-
+    El disco ya está modificado. Si cancelás ahora, no queda ni el sistema nuevo
+    ni lo que había antes, y hay que empezar de cero.
+  cancelarConfirmar: Sí, cancelar
+  cancelarVolver: Seguir instalando
+  falloTitulo: La instalación falló
+  falloTexto: >-
+    El disco quedó a medias: no tiene el sistema nuevo ni lo que había antes. El
+    registro de abajo dice dónde se cortó.
+  falloDetalleTitulo: Detalle del error
+  falloRegistroCompleto: El registro completo está en /var/log/archinstall/install.log
+  ayudanteCaidoTitulo: Se perdió el proceso privilegiado
+  ayudanteCaido: >-
+    El proceso que escribe en el disco terminó sin avisar. La instalación está
+    interrumpida.
+  pasos:
+    particionar: Particionando el disco
+    montar: Montando el destino
+    espejos: Eligiendo espejos
+    sistemaBase: Instalando el sistema base
+    escritorio: Instalando el escritorio
+    arranque: Configurando el arranque
+    usuarios: Creando tu cuenta
+    configuracion: Aplicando la configuración
+    vasakos: Ajustes de VasakOS
+    cierre: Cerrando
+
+fin:
+  titulo: VasakOS quedó instalado
+  intro: >-
+    Ya podés reiniciar. Acordate de sacar el medio de instalación cuando el
+    equipo se apague.
+  # `{0}` es el nombre de usuario.
+  primerInicio: "En el primer arranque iniciá sesión como {0}."
+  reiniciar: Reiniciar ahora
+  apagar: Apagar
+  seguirEnVivo: Seguir en la sesión live
+  seguirEnVivoAyuda: >-
+    La sesión live sigue funcionando. Nada de lo que hagas acá se guarda en el
+    sistema que acabás de instalar.
+  cifradoRecordatorio: >-
+    El disco quedó cifrado. En cada arranque hay que escribir la frase antes de
+    que aparezca la pantalla de inicio de sesión.
+
+errores:
+  vacio: No puede quedar vacío
+  # `{0}` es el largo máximo.
+  largo: "Como máximo {0} caracteres"
+  # `{0}` es el carácter que no se admite.
+  caracter: "No se admite el carácter «{0}»"
+  empiezaMal: No puede empezar así
+  terminaMal: No puede terminar así
+  reservado: Ese nombre ya lo usa el sistema
+  usuarioEmpiezaMal: Tiene que empezar con una letra minúscula o un guion bajo
+  equipoEmpiezaMal: No puede empezar con un guion
+  equipoTerminaMal: No puede terminar con un guion
+  sinAyudante: No se pudo obtener permiso de administrador
+  desconocido: Ocurrió un error inesperado

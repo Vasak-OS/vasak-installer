@@ -1,7 +1,7 @@
 [package]
-name = "vapp"
+name = "vasak-installer"
 version = "0.1.0"
-description = "A Vasak Application (template)"
+description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
 
@@ -11,8 +11,23 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "vapp_lib"
+name = "vasak_installer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Dos binarios, y la separación es la decisión de seguridad central de esta
+# aplicación: la ventana es un WebView completo y corre como el usuario de la
+# sesión; el ayudante es un programa de un solo archivo y es el único que corre
+# como root. Ver `helper.rs`.
+#
+# El empaquetador de Tauri sólo empaqueta el primero; el PKGBUILD instala el
+# segundo a mano en /usr/lib/vasak-installer/.
+[[bin]]
+name = "vasak-installer"
+path = "src/main.rs"
+
+[[bin]]
+name = "vasak-installer-helper"
+path = "src/helper_main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -33,6 +48,10 @@ tauri-plugin-shell = "2"
 # Para la ventana sin decoración: la barra propia necesita mover y redimensionar.
 gtk = "0.18"
 tauri-plugin-vsk-journal = "2"
+
+# Sólo por `getuid()` en el ayudante, para negarse a arrancar sin privilegios con
+# un mensaje que se entienda en vez de fallar después en el primer `mkfs`.
+libc = "0.2"
 
 [dev-dependencies]
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en
