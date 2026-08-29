@@ -90,10 +90,17 @@ export const ICONO_MENSAJE = {
 	exito: 'object-select',
 } as const;
 
-/** Las filas del resumen del equipo, en la bienvenida. */
+/**
+ * Las filas del resumen del equipo, en la bienvenida.
+ *
+ * `am-memory` y no `media-flash` para la memoria: `media-flash` es una tarjeta
+ * SD —en este tema, un enlace a `gnome-dev-media-sdmmc`— y la memoria RAM no es
+ * una tarjeta de cámara. Es el mismo error que tenía el icono del disco NVMe.
+ * `am-*` es el juego que usa vasak-monitor para estas mismas magnitudes.
+ */
 export const ICONO_EQUIPO = {
-	procesador: 'computer-chip',
-	memoria: 'media-flash',
+	procesador: 'am-cpu',
+	memoria: 'am-memory',
 	firmware: 'preferences-system-details',
 	virtualizacion: 'computer',
 } as const;
