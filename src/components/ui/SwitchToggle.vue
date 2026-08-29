@@ -50,6 +50,15 @@ const emit = defineEmits<{ 'update:modelValue': [valor: boolean] }>();
     <span class="min-w-0 flex-1">
       <span class="block font-medium text-sm">{{ label }}</span>
       <span v-if="descripcion" class="mt-0.5 block text-tx-muted text-xs">{{ descripcion }}</span>
+      <!--
+        Lo que quiera decirse debajo del texto va en la misma columna que el
+        texto. Antes esto se ponía afuera con un margen a mano calculado sobre la
+        estructura interna de este componente —interruptor, hueco, icono, hueco—
+        y quedaba veinte píxeles a la izquierda. Un margen que tiene que seguir
+        la disposición de otro componente se desincroniza en cuanto ese
+        componente cambia, y nadie se entera.
+      -->
+      <slot name="pie" />
     </span>
   </button>
 </template>

@@ -124,14 +124,14 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
               :descripcion="t(`complementos.items.${complemento.id}.descripcion`)"
               :icono="complemento.icono"
               @update:model-value="store.alternarComplemento(complemento.id)"
-            />
-            <p
-              v-if="loPropusoElHardware(complemento)"
-              class="ml-[5.5rem] flex items-center gap-1.5 text-status-success text-xs"
             >
-              <Icono nombre="object-select" clase="size-3" />
-              {{ t('complementos.propuestoPorHardware') }}
-            </p>
+              <template v-if="loPropusoElHardware(complemento)" #pie>
+                <span class="mt-1 flex items-center gap-1.5 text-status-success text-xs">
+                  <Icono nombre="object-select" clase="size-3" />
+                  {{ t('complementos.propuestoPorHardware') }}
+                </span>
+              </template>
+            </SwitchToggle>
           </div>
         </div>
       </SectionCard>

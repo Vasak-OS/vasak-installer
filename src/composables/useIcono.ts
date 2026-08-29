@@ -119,11 +119,16 @@ export function useIcono(
 	watch(
 		[nombre, tipo, version],
 		async ([actual, tipoActual]) => {
+			// El token sube **antes** de cualquier salida, incluida la de nombre
+			// vacío. Saliendo sin subirlo, una resolución que seguía pendiente
+			// cumplía después `mio === token` y volvía a poner su icono: el
+			// componente terminaba mostrando el icono de un nombre que ya no
+			// tiene.
+			const mio = ++token;
 			if (!actual) {
 				fuente.value = '';
 				return;
 			}
-			const mio = ++token;
 			const resuelto = await resolver(actual, tipoActual);
 			if (vivo && mio === token) fuente.value = resuelto;
 		},

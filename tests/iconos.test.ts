@@ -1,10 +1,15 @@
 /**
- * Que cada icono que nombra el instalador exista de verdad en el tema.
+ * Que cada icono que nombra el instalador exista de verdad, **en la variante que
+ * se le pide**.
  *
- * Es lo que se rompe callado: un nombre mal escrito no tira ningún error —el
- * plugin devuelve cadena vacía y el componente dibuja el hueco reservado—, así
- * que el resultado es un espacio en blanco donde tendría que haber un símbolo.
- * Y como la interfaz sigue funcionando, se descubre mirando una captura.
+ * Es lo que se rompe callado. Un nombre mal escrito no tira ningún error: el
+ * plugin no lo encuentra, devuelve `image-missing` —el icono de imagen rota— y
+ * la interfaz sigue funcionando. Se descubre mirando la pantalla.
+ *
+ * Y no alcanza con que el nombre exista: el tema tiene **dos versiones de casi
+ * todo**, la de color y la simbólica, y el instalador pide una u otra según para
+ * qué es el icono. Pedir a color un nombre que sólo existe en simbólico cae en
+ * el mismo `image-missing`. Le pasó a «Desarrollo» con `builder-build`.
  *
  * Se busca contra el tema **instalado** y no contra el árbol de
  * `vasakos-icon-theme`, porque instalado es como lo va a ver el plugin: si un
@@ -15,8 +20,8 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
 import { PASOS } from '../src/stores/instalacion';
+import { ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
 
 /**
  * Dónde busca GTK, en el orden en que hereda el tema.
@@ -32,9 +37,15 @@ const TEMAS = [
 	'/usr/share/icons/hicolor',
 ];
 
-/** Todos los nombres de archivo de icono que hay en los temas, sin extensión. */
-function nombresDisponibles(): Set<string> {
-	const encontrados = new Set<string>();
+/**
+ * Nombre de icono → todas las rutas donde aparece.
+ *
+ * Se guardan las rutas y no sólo los nombres porque **la carpeta y el sufijo son
+ * lo que distingue las dos variantes**, y con un conjunto de nombres a secas no
+ * se puede saber cuál de las dos se encontró.
+ */
+function inventario(): Map<string, string[]> {
+	const encontrados = new Map<string, string[]>();
 
 	const recorrer = (dir: string, profundidad: number) => {
 		if (profundidad > 4) return;
@@ -60,7 +71,10 @@ function nombresDisponibles(): Set<string> {
 			}
 			const punto = entrada.indexOf('.');
 			if (punto <= 0) continue;
-			encontrados.add(entrada.slice(0, punto));
+			const nombre = entrada.slice(0, punto);
+			const previas = encontrados.get(nombre);
+			if (previas) previas.push(ruta);
+			else encontrados.set(nombre, [ruta]);
 		}
 	};
 
@@ -70,30 +84,55 @@ function nombresDisponibles(): Set<string> {
 	return encontrados;
 }
 
+const RUTAS = inventario();
+
+/**
+ * Si una ruta es la variante simbólica.
+ *
+ * Se miran las dos señales, porque el tema usa las dos y ninguna sola alcanza:
+ * `printer` tiene su simbólico en `devices/32/printer-symbolic.svg`, fuera de
+ * toda carpeta `symbolic/`; y hay dieciséis archivos dentro de carpetas
+ * `symbolic/` cuyo nombre no lleva el sufijo. Mirando sólo la carpeta se
+ * rechazaría `printer` por no tener simbólico —que sí lo tiene—, y mirando sólo
+ * el sufijo, esos dieciséis pasarían por iconos a color.
+ */
+function esSimbolica(ruta: string): boolean {
+	const archivo = ruta.slice(ruta.lastIndexOf('/') + 1);
+	const sinExtension = archivo.slice(0, archivo.indexOf('.'));
+	return ruta.includes('/symbolic/') || sinExtension.endsWith('-symbolic');
+}
+
+/** Si el nombre tiene versión **a color**, que es lo que pide `tipo="icono"`. */
+function hayVersionAColor(nombre: string): boolean {
+	return (RUTAS.get(nombre) ?? []).some((ruta) => !esSimbolica(ruta));
+}
+
+/** Si el nombre tiene versión **simbólica**, que es lo que pide `tipo="simbolo"`. */
+function hayVersionSimbolica(nombre: string): boolean {
+	if ((RUTAS.get(`${nombre}-symbolic`) ?? []).length > 0) return true;
+	// Un archivo con el nombre pelado adentro de una carpeta `symbolic/`.
+	return (RUTAS.get(nombre) ?? []).some(esSimbolica);
+}
+
+/** Si el nombre existe en alguna de las dos variantes. */
+function existe(nombre: string): boolean {
+	return hayVersionAColor(nombre) || hayVersionSimbolica(nombre);
+}
+
 describe('los iconos que nombra el instalador', () => {
-	const disponibles = nombresDisponibles();
-	// Sin ningún tema instalado no hay nada contra qué comparar; el test se
-	// saltea en lugar de fallar, que es lo que corresponde en una máquina de
+	// Sin ningún tema instalado no hay nada contra qué comparar; los tests se
+	// saltean en lugar de fallar, que es lo que corresponde en una máquina de
 	// integración sin escritorio.
-	const hayTema = disponibles.size > 0;
+	const hayTema = RUTAS.size > 0;
 
 	test('el tema está instalado y se pudo leer', () => {
 		if (!hayTema) return;
-		expect(disponibles.size).toBeGreaterThan(100);
+		expect(RUTAS.size).toBeGreaterThan(100);
 	});
 
 	test('todos existen en el tema', () => {
 		if (!hayTema) return;
-
-		// El plugin resuelve con `FORCE_SYMBOLIC`, así que `network-wireless`
-		// llega al disco como `network-wireless-symbolic`. Se aceptan las dos
-		// formas: un icono que sólo exista sin la variante simbólica igual se
-		// dibuja.
-		const faltantes = todosLosIconos().filter(
-			(nombre) => !disponibles.has(`${nombre}-symbolic`) && !disponibles.has(nombre)
-		);
-
-		expect(faltantes).toEqual([]);
+		expect(todosLosIconos().filter((nombre) => !existe(nombre))).toEqual([]);
 	});
 
 	test('cada paso del asistente tiene su icono', () => {
@@ -114,33 +153,25 @@ describe('los iconos que nombra el instalador', () => {
 	});
 
 	/**
-	 * Los iconos del catálogo de complementos también tienen que existir.
+	 * Los iconos del catálogo de complementos existen **a color**.
 	 *
-	 * Viven en un archivo de datos editable, así que no hay ningún compilador que
-	 * los mire: sumar un navegador con un icono mal escrito deja un hueco en
-	 * blanco al lado de su nombre y no falla nada.
+	 * Los complementos se dibujan con `tipo="icono"`. Pedir a color un nombre que
+	 * sólo existe en simbólico **no falla**: el plugin devuelve `image-missing`,
+	 * o sea que al lado de «Desarrollo» aparece el icono de imagen rota. Y el
+	 * catálogo es un archivo de datos editable que ningún compilador mira.
 	 *
-	 * Se sacan con una expresión regular en vez de parsear el TOML: es un archivo
-	 * nuestro con una forma conocida, y traer un parser al frontend sólo para
-	 * este test sería una dependencia por un `grep`.
+	 * Los nombres se sacan con una expresión regular en vez de parsear el TOML:
+	 * es un archivo nuestro con una forma conocida, y traer un parser al frontend
+	 * sólo para este test sería una dependencia por un `grep`.
 	 */
-	test('los iconos del catálogo de complementos existen **a color**', () => {
+	test('los iconos del catálogo de complementos existen a color', () => {
 		if (!hayTema) return;
 
 		const toml = readFileSync('src-tauri/complementos.toml', 'utf8');
 		const iconos = [...toml.matchAll(/^icono\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
 		expect(iconos.length).toBeGreaterThan(5);
 
-		// Se exige el nombre **sin** el sufijo simbólico: los complementos se
-		// dibujan con `tipo="icono"`, que pide la versión a color.
-		//
-		// Y esto no es un detalle estético. Pedir a color un nombre que sólo
-		// existe en simbólico **no falla**: el plugin no encuentra el archivo y
-		// devuelve `image-missing`, o sea que al lado de «Desarrollo» aparece el
-		// icono de imagen rota. La interfaz sigue funcionando y sólo se ve
-		// mirando la pantalla.
-		const sinVersionAColor = iconos.filter((nombre) => !disponibles.has(nombre));
-		expect(sinVersionAColor).toEqual([]);
+		expect(iconos.filter((nombre) => !hayVersionAColor(nombre))).toEqual([]);
 	});
 
 	/**
@@ -150,10 +181,10 @@ describe('los iconos que nombra el instalador', () => {
 	 * Chromium y Brave son tres contornos que nadie distingue, y elegir navegador
 	 * mirando tres contornos iguales no es elegir.
 	 */
-	test('los navegadores tienen su icono de aplicación', () => {
+	test('los navegadores tienen su icono de aplicación a color', () => {
 		if (!hayTema) return;
 		for (const nombre of ['firefox', 'chromium', 'brave-browser']) {
-			expect(disponibles.has(nombre)).toBe(true);
+			expect(hayVersionAColor(nombre)).toBe(true);
 		}
 	});
 
@@ -165,33 +196,33 @@ describe('los iconos que nombra el instalador', () => {
 	 */
 	test('los iconos de los pasos existen en versión simbólica', () => {
 		if (!hayTema) return;
-		const sinSimbolo = Object.values(ICONO_PASO).filter(
-			(nombre) => !disponibles.has(`${nombre}-symbolic`)
-		);
+		const sinSimbolo = Object.values(ICONO_PASO).filter((n) => !hayVersionSimbolica(n));
 		expect(sinSimbolo).toEqual([]);
 	});
 
 	/**
-	 * Ningún icono de disco puede ser el de otro dispositivo.
+	 * Cada tipo de disco usa **exactamente** el icono que le corresponde.
 	 *
 	 * Es el error que hubo: el NVMe se dibujaba con `media-flash`, que en este
 	 * tema es un enlace a `gnome-dev-media-sdmmc` —una tarjeta SD—, y el SSD con
 	 * `drive-multidisk`, una pila de discos de RAID. En la pantalla donde se
 	 * elige qué disco formatear, un icono que miente sobre qué dispositivo es
 	 * resulta peor que uno repetido.
+	 *
+	 * Se comparan nombres exactos y no un prefijo: con `startsWith` pasaría
+	 * `drive-harddisk-nvme`, que no existe en el tema y volvería a dar el icono
+	 * de imagen rota.
 	 */
-	test('los discos se dibujan con un icono de disco', () => {
-		const usados = [
-			iconoDeDisco({ nvme: true, rotacional: false }),
-			iconoDeDisco({ nvme: false, rotacional: true }),
-			iconoDeDisco({ nvme: false, rotacional: false }),
-		];
-		for (const nombre of usados) {
-			expect(nombre.startsWith('drive-harddisk')).toBe(true);
-		}
-		// Y los nombres que engañaban no pueden volver.
-		expect(usados).not.toContain('media-flash');
-		expect(usados).not.toContain('drive-multidisk');
+	test('cada tipo de disco usa el icono que le corresponde', () => {
+		expect(iconoDeDisco({ nvme: false, rotacional: true })).toBe('drive-harddisk');
+		expect(iconoDeDisco({ nvme: true, rotacional: false })).toBe('drive-harddisk-solidstate');
+		expect(iconoDeDisco({ nvme: false, rotacional: false })).toBe('drive-harddisk-solidstate');
+
+		// Y los dos nombres tienen que existir a color de verdad, que es como se
+		// dibujan las tarjetas de disco.
+		if (!hayTema) return;
+		expect(hayVersionAColor('drive-harddisk')).toBe(true);
+		expect(hayVersionAColor('drive-harddisk-solidstate')).toBe(true);
 	});
 
 	test('ningún nombre lleva extensión ni ruta', () => {
