@@ -4,6 +4,14 @@ version = "0.1.0"
 description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
+# Cuál de los dos binarios corre `cargo run`.
+#
+# Sin esto, `cargo run` se planta con «could not determine which binary to run»
+# en cuanto el paquete tiene más de un `[[bin]]` — y `tauri dev` es exactamente
+# un `cargo run`, así que la aplicación no se podía desarrollar. `tauri build` no
+# lo notaba porque compila los dos y el empaquetador elige por `productName`:
+# el fallo aparecía sólo al querer trabajar sobre la interfaz.
+default-run = "vasak-installer"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

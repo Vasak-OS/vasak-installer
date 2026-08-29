@@ -6,6 +6,7 @@ import AlertMessage from '@/components/ui/AlertMessage.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
+import { ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t } = useI18n();
@@ -27,7 +28,7 @@ async function accion(comando: 'reiniciar' | 'apagar') {
 
 <template>
   <div>
-    <PageHeader :titulo="t('fin.titulo')" :descripcion="t('fin.intro')" />
+    <PageHeader :icono="ICONO_PASO.fin" :titulo="t('fin.titulo')" :descripcion="t('fin.intro')" />
 
     <div class="space-y-4">
       <AlertMessage tipo="exito">

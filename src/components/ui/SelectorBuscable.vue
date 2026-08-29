@@ -13,13 +13,7 @@
  * es un paquete más en la ISO.
  */
 import { computed, nextTick, ref, watch } from 'vue';
-
-interface Opcion {
-	valor: string;
-	etiqueta: string;
-	/** Segunda línea, para desambiguar («Argentina» debajo de «Buenos Aires»). */
-	detalle?: string;
-}
+import { buscarOpciones, type Opcion } from '@/tools/buscar';
 
 interface Props {
 	modelValue: string;
@@ -44,32 +38,26 @@ const seleccionada = computed(
 );
 
 /**
- * Las coincidencias, recortadas al tope.
+ * Las coincidencias, ordenadas por qué tan bien coinciden y recortadas al tope.
  *
  * El recorte no es una optimización prematura: sin él, con la búsqueda vacía se
  * renderizan cuatrocientos nodos, y como este cálculo corre en cada tecla, cada
- * letra tipeada recrea la lista entera. Con el tope, escribir es instantáneo y
- * lo que se pierde son coincidencias que nadie iba a mirar — dos letras ya bajan
- * cualquier lista de las nuestras por debajo de sesenta.
+ * letra tipeada recrea la lista entera.
+ *
+ * **El orden es lo que hace que el recorte sea seguro.** Recortar una lista
+ * alfabética esconde justo lo que se busca: escribiendo `la` para el teclado
+ * latinoamericano, `la-latin1` quedaba detrás de `be-latin1`, `br-latin1-abnt2`,
+ * `cz-lat2`, `de-latin1`… porque todos contienen «latin». La lógica del orden y
+ * sus pruebas están en `tools/buscar.ts`.
  */
-const coincidencias = computed(() => {
-	const texto = busqueda.value.trim().toLowerCase();
-	const filtradas = texto
-		? props.opciones.filter(
-				(o) =>
-					o.etiqueta.toLowerCase().includes(texto) ||
-					o.valor.toLowerCase().includes(texto) ||
-					(o.detalle?.toLowerCase().includes(texto) ?? false)
-			)
-		: props.opciones;
-	return filtradas.slice(0, props.tope);
-});
+const ordenadas = computed(() => buscarOpciones(props.opciones, busqueda.value));
 
-const hayMas = computed(() => {
-	const texto = busqueda.value.trim().toLowerCase();
-	const total = texto ? coincidencias.value.length : props.opciones.length;
-	return total > props.tope;
-});
+const coincidencias = computed(() => ordenadas.value.slice(0, props.tope));
+
+// Cuántas quedaron afuera del recorte, para poder decirlo en vez de que
+// desaparezcan en silencio. Antes se comparaba contra la lista **ya recortada**,
+// así que el total nunca superaba el tope y el aviso no aparecía jamás.
+const hayMas = computed(() => ordenadas.value.length > props.tope);
 
 function elegir(valor: string) {
 	emit('update:modelValue', valor);

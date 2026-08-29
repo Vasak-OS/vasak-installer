@@ -3,6 +3,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import PasoBoton from '@/components/sidebar/PasoBoton.vue';
 import { PASOS, type Paso } from '@/stores/instalacion';
+import { ICONO_PASO } from '@/tools/iconos';
 
 interface Props {
 	actual: Paso;
@@ -39,6 +40,7 @@ function estado(indice: number): 'hecho' | 'actual' | 'pendiente' {
           :numero="indice + 1"
           :titulo="t(`pasos.${paso}.titulo`)"
           :descripcion="t(`pasos.${paso}.descripcion`)"
+          :icono="ICONO_PASO[paso]"
           :estado="estado(indice)"
           :navegable="navegable && indice < indiceActual"
           @click="$emit('ir', paso)"

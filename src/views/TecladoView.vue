@@ -7,6 +7,7 @@ import SectionCard from '@/components/ui/SectionCard.vue';
 import SelectorBuscable from '@/components/ui/SelectorBuscable.vue';
 import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
+import { ICONO_PASO } from '@/tools/iconos';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
@@ -27,7 +28,7 @@ const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
 
 <template>
   <div>
-    <PageHeader :titulo="t('teclado.titulo')" :descripcion="t('teclado.intro')" />
+    <PageHeader :icono="ICONO_PASO.teclado" :titulo="t('teclado.titulo')" :descripcion="t('teclado.intro')" />
 
     <div class="space-y-4">
       <SectionCard :titulo="t('teclado.distribucion')">

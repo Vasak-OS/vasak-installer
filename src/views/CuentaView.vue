@@ -8,6 +8,7 @@ import SectionCard from '@/components/ui/SectionCard.vue';
 import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
+import { ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t } = useI18n();
@@ -167,7 +168,7 @@ const anchoFuerza = computed(() => {
 
 <template>
   <div>
-    <PageHeader :titulo="t('cuenta.titulo')" />
+    <PageHeader :icono="ICONO_PASO.cuenta" :titulo="t('cuenta.titulo')" />
 
     <div class="space-y-4">
       <SectionCard>

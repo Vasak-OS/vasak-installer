@@ -2,10 +2,12 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, nextTick, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
+import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import ProgressBar from '@/components/ui/ProgressBar.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
+import { ICONO_FALLADO, ICONO_HECHO, ICONO_PASO, ICONO_PASO_INSTALACION } from '@/tools/iconos';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
@@ -78,7 +80,7 @@ watch(
 
 <template>
   <div>
-    <PageHeader :titulo="t('instalacion.titulo')" :descripcion="t('instalacion.intro')" />
+    <PageHeader :icono="ICONO_PASO.instalacion" :titulo="t('instalacion.titulo')" :descripcion="t('instalacion.intro')" />
 
     <div class="space-y-4">
       <AlertMessage v-if="store.fallo" tipo="error" :titulo="t('instalacion.falloTitulo')">
@@ -114,25 +116,44 @@ watch(
             :key="clave"
             class="flex items-center gap-3 text-sm"
           >
+            <!--
+              El icono del paso siempre visible, y el estado como emblema encima.
+              Reemplazar el icono por un tilde dejaba diez pasos terminados
+              idénticos entre sí, sin ninguna pista de qué había hecho cada uno
+              —que es justo lo que se mira cuando algo falló y hay que entender
+              hasta dónde llegó.
+            -->
             <span
-              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs"
+              class="relative flex size-8 shrink-0 items-center justify-center rounded-corner border transition-colors"
               :class="
                 estadoDe(clave) === 'hecho'
-                  ? 'border-status-success bg-status-success/20'
+                  ? 'border-status-success/60 bg-status-success/15'
                   : estadoDe(clave) === 'en_curso'
                     ? 'border-secondary bg-primary/20'
                     : estadoDe(clave) === 'fallado'
                       ? 'border-status-error bg-status-error/20'
-                      : 'border-ui-border-strong'
+                      : 'border-ui-border-strong bg-ui-surface/30'
               "
               aria-hidden="true"
             >
-              <template v-if="estadoDe(clave) === 'hecho'">✓</template>
-              <template v-else-if="estadoDe(clave) === 'fallado'">✕</template>
-              <template v-else>{{ indice + 1 }}</template>
+              <IconoSimbolo :nombre="ICONO_PASO_INSTALACION[clave] ?? ''" clase="size-4" />
+              <span
+                v-if="estadoDe(clave) === 'hecho' || estadoDe(clave) === 'fallado'"
+                class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full"
+                :class="estadoDe(clave) === 'hecho' ? 'bg-status-success' : 'bg-status-error'"
+              >
+                <IconoSimbolo
+                  :nombre="estadoDe(clave) === 'hecho' ? ICONO_HECHO : ICONO_FALLADO"
+                  clase="size-3"
+                />
+              </span>
             </span>
             <span :class="estadoDe(clave) === 'pendiente' ? 'text-tx-muted' : ''">
               {{ t(`instalacion.pasos.${clave}`) }}
+            </span>
+            <!-- El número, chico y al final, igual que en la barra lateral. -->
+            <span class="ml-auto shrink-0 text-tx-muted text-xs tabular-nums" aria-hidden="true">
+              {{ indice + 1 }}
             </span>
           </li>
         </ol>

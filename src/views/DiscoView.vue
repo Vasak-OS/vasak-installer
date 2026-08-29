@@ -2,12 +2,20 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
+import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import TextInput from '@/components/ui/TextInput.vue';
 import { type Disco, type SistemaArchivos, useInstalacionStore } from '@/stores/instalacion';
 import { formatearBytes } from '@/tools/formato';
+import {
+	ICONO_PASO,
+	ICONO_ROL_PARTICION,
+	ICONO_SISTEMA_ARCHIVOS,
+	iconoDeDisco,
+} from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t, locale } = useI18n();
@@ -60,7 +68,7 @@ onMounted(async () => {
 
 <template>
   <div>
-    <PageHeader :titulo="t('disco.titulo')" :descripcion="t('disco.intro')" />
+    <PageHeader :icono="ICONO_PASO.disco" :titulo="t('disco.titulo')" :descripcion="t('disco.intro')" />
 
     <div class="space-y-4">
       <div v-if="store.discos.length === 0">
@@ -88,11 +96,22 @@ onMounted(async () => {
             ]"
             @click="store.eleccion.disco = disco.ruta"
           >
-            <div class="flex items-baseline justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <span
+                class="flex size-10 shrink-0 items-center justify-center rounded-corner border"
+                :class="
+                  store.eleccion.disco === disco.ruta
+                    ? 'border-secondary bg-primary/20'
+                    : 'border-ui-border bg-ui-surface/40'
+                "
+                aria-hidden="true"
+              >
+                <IconoSimbolo :nombre="iconoDeDisco(disco)" clase="size-6" />
+              </span>
               <span class="min-w-0 flex-1 truncate font-medium text-sm">{{ disco.modelo }}</span>
               <span class="shrink-0 font-mono text-sm">{{ tamano(disco.tamano_bytes) }}</span>
             </div>
-            <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-tx-muted text-xs">
+            <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-tx-muted text-xs">
               <span class="font-mono">{{ disco.ruta }}</span>
               <span v-if="disco.nvme">NVMe</span>
               <span v-else-if="disco.rotacional">HDD</span>
@@ -145,14 +164,18 @@ onMounted(async () => {
       </ul>
 
       <SectionCard :titulo="t('disco.sistemaArchivos')">
-        <div class="space-y-1">
-          <SwitchToggle
+        <!-- `radiogroup` y no tres interruptores sueltos: sólo puede haber uno
+             elegido, y un lector de pantalla tiene que anunciarlo como «opción 1
+             de 3» y no como tres controles independientes. -->
+        <div role="radiogroup" :aria-label="t('disco.sistemaArchivos')" class="space-y-2">
+          <OpcionRadio
             v-for="fs in sistemasDeArchivos"
             :key="fs.valor"
-            :model-value="store.eleccion.sistemaArchivos === fs.valor"
+            :seleccionada="store.eleccion.sistemaArchivos === fs.valor"
             :label="t(fs.nombre)"
             :descripcion="t(fs.ayuda)"
-            @update:model-value="store.eleccion.sistemaArchivos = fs.valor"
+            :icono="ICONO_SISTEMA_ARCHIVOS[fs.valor]"
+            @elegir="store.eleccion.sistemaArchivos = fs.valor"
           />
         </div>
       </SectionCard>
@@ -208,8 +231,9 @@ onMounted(async () => {
             :key="indice"
             class="rounded-corner border border-ui-border p-2"
           >
-            <div class="flex items-baseline justify-between gap-2">
-              <span class="font-medium">
+            <div class="flex items-center justify-between gap-2">
+              <span class="flex items-center gap-2 font-medium">
+                <IconoSimbolo :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
                 {{
                   particion.rol === 'esp'
                     ? t('disco.rolEsp')

@@ -272,15 +272,40 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	// ── Carga ──────────────────────────────────────────────────────────────
 
 	async function cargarSondeo() {
-		sistema.value = await invoke<Sistema>('sondear_sistema');
-		pasosInstalacion.value = await invoke<string[]>('pasos_de_instalacion');
-		catalogos.value = await invoke<Catalogos>('catalogos');
+		// Los cuatro sondeos salen juntos porque ninguno depende de otro, y uno
+		// de ellos —`catalogos`— recorre `/usr/share/zoneinfo`, `SUPPORTED` de
+		// glibc y el árbol de mapas de teclado: cientos de entradas de directorio
+		// en un medio live, que arranca desde un squashfs comprimido. Encadenados,
+		// la primera pantalla esperaba la suma de los cuatro; en paralelo espera
+		// el más lento.
+		//
+		// `allSettled` y no `all`: que falle uno no puede dejar la ventana vacía.
+		// Sin catálogos, los tres selectores caen a campos de texto —ya está
+		// contemplado en las vistas— y el instalador sigue siendo usable.
+		const [resSistema, resPasos, resCatalogos] = await Promise.allSettled([
+			invoke<Sistema>('sondear_sistema'),
+			invoke<string[]>('pasos_de_instalacion'),
+			invoke<Catalogos>('catalogos'),
+			recargarDiscos(),
+		]);
+
+		if (resSistema.status === 'fulfilled') sistema.value = resSistema.value;
+		if (resPasos.status === 'fulfilled') pasosInstalacion.value = resPasos.value;
+		if (resCatalogos.status === 'fulfilled') catalogos.value = resCatalogos.value;
 
 		// Predeterminados que salen del sistema, no fijos. Un instalador que
 		// abre siempre en `UTC`/`us` hace que casi todo el mundo tenga que
 		// cambiar tres campos que ya estaban bien en el medio live.
+		//
+		// Va **después** de la espera: lee `catalogos` para comprobar que la zona
+		// y el idioma del entorno existan en las listas del sistema.
 		aplicarPredeterminadosDelEntorno();
-		await recargarDiscos();
+
+		// Lo que sí es un error de verdad se propaga: sin poder leer el equipo, el
+		// paso de red no sabe si hay conexión y el resumen no sabe el firmware.
+		if (resSistema.status === 'rejected') {
+			throw resSistema.reason;
+		}
 	}
 
 	function aplicarPredeterminadosDelEntorno() {

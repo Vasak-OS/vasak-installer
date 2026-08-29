@@ -6,6 +6,7 @@ import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { formatearBytes, nombreDeIdioma, nombreDeZona } from '@/tools/formato';
+import { ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t, locale } = useI18n();
@@ -36,7 +37,7 @@ async function autorizar() {
 
 <template>
   <div>
-    <PageHeader :titulo="t('resumen.titulo')" :descripcion="t('resumen.intro')" />
+    <PageHeader :icono="ICONO_PASO.resumen" :titulo="t('resumen.titulo')" :descripcion="t('resumen.intro')" />
 
     <div class="space-y-4">
       <!--

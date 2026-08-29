@@ -9,6 +9,7 @@ import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { nombreDeIdioma, nombreDeZona } from '@/tools/formato';
+import { ICONO_PASO } from '@/tools/iconos';
 
 const { t, locale } = useI18n();
 const store = useInstalacionStore();
@@ -37,7 +38,7 @@ const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
 
 <template>
   <div>
-    <PageHeader :titulo="t('region.titulo')" />
+    <PageHeader :icono="ICONO_PASO.region" :titulo="t('region.titulo')" />
 
     <div class="space-y-4">
       <SectionCard :titulo="t('region.zonaHoraria')" :descripcion="t('region.zonaHorariaAyuda')">

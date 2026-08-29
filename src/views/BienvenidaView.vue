@@ -2,10 +2,12 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
+import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { PASOS, useInstalacionStore } from '@/stores/instalacion';
 import { formatearBytes } from '@/tools/formato';
+import { ICONO_EQUIPO, ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t, locale } = useI18n();
@@ -24,11 +26,14 @@ const pocaMemoria = computed(
 
 <template>
   <div>
-    <PageHeader :titulo="t('bienvenida.titulo')" :descripcion="interpolar(t('bienvenida.intro'), PASOS.length)" />
+    <PageHeader :icono="ICONO_PASO.bienvenida" :titulo="t('bienvenida.titulo')" :descripcion="interpolar(t('bienvenida.intro'), PASOS.length)" />
 
     <SectionCard :titulo="t('bienvenida.equipo')">
       <dl v-if="store.sistema" class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
-        <dt class="text-tx-muted">{{ t('bienvenida.procesador') }}</dt>
+        <dt class="flex items-center gap-2 text-tx-muted">
+          <IconoSimbolo :nombre="ICONO_EQUIPO.procesador" />
+          {{ t('bienvenida.procesador') }}
+        </dt>
         <dd>
           {{ store.sistema.cpu || '—' }}
           <span class="text-tx-muted text-xs">
@@ -36,16 +41,25 @@ const pocaMemoria = computed(
           </span>
         </dd>
 
-        <dt class="text-tx-muted">{{ t('bienvenida.memoria') }}</dt>
+        <dt class="flex items-center gap-2 text-tx-muted">
+          <IconoSimbolo :nombre="ICONO_EQUIPO.memoria" />
+          {{ t('bienvenida.memoria') }}
+        </dt>
         <dd>{{ memoria }}</dd>
 
-        <dt class="text-tx-muted">{{ t('bienvenida.firmware') }}</dt>
+        <dt class="flex items-center gap-2 text-tx-muted">
+          <IconoSimbolo :nombre="ICONO_EQUIPO.firmware" />
+          {{ t('bienvenida.firmware') }}
+        </dt>
         <dd>
           {{ store.sistema.firmware === 'uefi' ? t('bienvenida.firmwareUefi') : t('bienvenida.firmwareBios') }}
         </dd>
 
         <template v-if="store.sistema.virtualizacion">
-          <dt class="text-tx-muted">{{ t('bienvenida.virtualizacion') }}</dt>
+          <dt class="flex items-center gap-2 text-tx-muted">
+          <IconoSimbolo :nombre="ICONO_EQUIPO.virtualizacion" />
+          {{ t('bienvenida.virtualizacion') }}
+        </dt>
           <dd class="font-mono text-xs">{{ store.sistema.virtualizacion }}</dd>
         </template>
       </dl>

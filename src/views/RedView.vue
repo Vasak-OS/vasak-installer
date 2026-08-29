@@ -5,6 +5,7 @@ import AlertMessage from '@/components/ui/AlertMessage.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
+import { ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t } = useI18n();
@@ -59,7 +60,7 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <PageHeader :titulo="t('red.titulo')" :descripcion="t('red.intro')" />
+    <PageHeader :icono="ICONO_PASO.red" :titulo="t('red.titulo')" :descripcion="t('red.intro')" />
 
     <SectionCard>
       <AlertMessage v-if="hayRed" tipo="exito" :titulo="t('red.conectado')">

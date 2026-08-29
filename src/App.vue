@@ -6,6 +6,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import type { Store } from 'pinia';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
+import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -166,6 +167,19 @@ onUnmounted(() => {
 
 <template>
   <WindowAppLayout>
+    <!--
+      La barra de título propia: icono a la izquierda, nombre al medio. Sin esto
+      quedaba con los tres botones de la ventana flotando sobre nada — y como la
+      ventana no tiene decoración del compositor, el nombre de la aplicación no
+      aparecía en ningún otro lado.
+    -->
+    <template #identidad>
+      <IconoSimbolo nombre="system-software-install" clase="size-5" />
+    </template>
+    <template #titulo>
+      <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
+    </template>
+
     <div class="flex min-h-0 w-full flex-1">
       <PasosSidebar
         :actual="store.paso"
