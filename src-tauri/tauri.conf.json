@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vapp",
+  "productName": "vasak-installer",
   "version": "0.1.0",
-  "identifier": "ar.net.vasak.vapp",
+  "identifier": "ar.net.vasak.installer",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "vapp",
-        "width": 800,
-        "height": 600,
+        "title": "Instalar VasakOS",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 900,
+        "minHeight": 640,
+        "center": true,
         "decorations": false,
         "transparent": true
       }

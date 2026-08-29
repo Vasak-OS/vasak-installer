@@ -223,7 +223,16 @@ body * {
  * Va con `:where()` para que tenga especificidad cero: cualquier componente que
  * quiera su propio indicador lo pisa sin peleas, y esto queda como piso.
  */
-:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
+:where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -247,5 +256,23 @@ body * {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * La banda de la barra de progreso indefinida.
+ *
+ * Va en `@keyframes` y no en línea porque Tailwind 4 no genera animaciones
+ * arbitrarias sin la definición. La detención por `prefers-reduced-motion` la
+ * cubre la regla de más arriba, que fija `animation-iteration-count: 1`: una
+ * barra que se desliza sin parar durante media hora es exactamente lo que marea
+ * a alguien con trastorno vestibular.
+ */
+@keyframes indefinida {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
   }
 }

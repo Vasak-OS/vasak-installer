@@ -1,0 +1,30 @@
+# Los paquetes que el instalador le pasa a archinstall en `packages`.
+#
+# Formato: un paquete por línea; `#` comenta hasta el fin de línea; las líneas
+# vacías se ignoran. Lo lee `archconfig.rs` en tiempo de ejecución desde
+# /usr/share/vasak-installer/paquetes.txt — **no está compilado dentro del
+# binario**, así que sumar un paquete al escritorio no obliga a recompilar el
+# instalador ni a rehacer la ISO.
+#
+# El escritorio entero es el metapaquete `vasakos-desktop`, que sale del
+# repositorio propio y arrastra por dependencia los 255 paquetes que forman
+# VasakOS. Antes esa lista estaba escrita acá entera y otra vez en
+# `archiso/packages.x86_64` —lo que la ISO instala en el medio live—, en dos
+# repositorios distintos y sincronizadas a mano: sumar un paquete y olvidarse
+# de la otra lista daba una ISO en la que algo andaba y un sistema instalado en
+# el que no. Sumar un paquete al escritorio ahora es editarle las `depends` al
+# metapaquete en `PKGBUILDS/vasakos-desktop/`; este archivo no cambia.
+
+# EL ESCRITORIO
+vasakos-desktop
+
+# KERNEL
+#
+# No está en el metapaquete porque es una elección, y acá se nombra igual
+# aunque archinstall instale el kernel por su propio campo `kernels`: nombrarlo
+# de nuevo no cuesta nada —pacman saltea lo que ya está— y deja el archivo
+# legible como «lo que tiene el sistema instalado». Los encabezados sí hacen
+# falta: archinstall no los instala, y `broadcom-wl-dkms` compila su módulo
+# contra ellos.
+linux
+linux-headers

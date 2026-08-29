@@ -1,9 +1,17 @@
 [package]
-name = "vapp"
+name = "vasak-installer"
 version = "0.1.0"
-description = "A Vasak Application (template)"
+description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
+# Cuál de los dos binarios corre `cargo run`.
+#
+# Sin esto, `cargo run` se planta con «could not determine which binary to run»
+# en cuanto el paquete tiene más de un `[[bin]]` — y `tauri dev` es exactamente
+# un `cargo run`, así que la aplicación no se podía desarrollar. `tauri build` no
+# lo notaba porque compila los dos y el empaquetador elige por `productName`:
+# el fallo aparecía sólo al querer trabajar sobre la interfaz.
+default-run = "vasak-installer"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,8 +19,23 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "vapp_lib"
+name = "vasak_installer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Dos binarios, y la separación es la decisión de seguridad central de esta
+# aplicación: la ventana es un WebView completo y corre como el usuario de la
+# sesión; el ayudante es un programa de un solo archivo y es el único que corre
+# como root. Ver `helper.rs`.
+#
+# El empaquetador de Tauri sólo empaqueta el primero; el PKGBUILD instala el
+# segundo a mano en /usr/lib/vasak-installer/.
+[[bin]]
+name = "vasak-installer"
+path = "src/main.rs"
+
+[[bin]]
+name = "vasak-installer-helper"
+path = "src/helper_main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -34,7 +57,20 @@ tauri-plugin-shell = "2"
 gtk = "0.18"
 tauri-plugin-vsk-journal = "2"
 
+# Sólo por `getuid()` en el ayudante, para negarse a arrancar sin privilegios con
+# un mensaje que se entienda en vez de fallar después en el primer `mkfs`.
+libc = "0.2"
+
+# El catálogo de complementos (navegador, controladores, impresoras) es un TOML
+# que se lee en tiempo de ejecución: sumar un navegador tiene que ser editar un
+# archivo de datos, no recompilar el instalador ni rehacer la ISO.
+toml = "0.8"
+
 [dev-dependencies]
+# Árboles de `/sys` de mentira para probar la detección de hardware: no hay forma
+# de tener una NVIDIA y una AMD en la misma máquina de pruebas, y el código que
+# elige qué controlador proponer es justamente el que no puede estar sin probar.
+tempfile = "3"
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en
 # tiempo de ejecución y **paniquea** si no puede, así que un error de sintaxis no
 # se ve hasta que la aplicación no arranca.

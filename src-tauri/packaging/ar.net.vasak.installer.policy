@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<!--
+  La acción de polkit que autoriza al ayudante privilegiado.
+
+  Sin esta declaración, `pkexec /usr/lib/vasak-installer/vasak-installer-helper`
+  cae en la acción genérica «ejecutar un programa como otro usuario», cuyo
+  mensaje es «Se necesita autenticación para ejecutar /usr/lib/…» — un texto que
+  no dice qué se va a hacer ni quién lo pide. La anotación `exec.path` es lo que
+  hace que pkexec use ésta en su lugar.
+
+  El valor por defecto es `auth_admin`: **se pide autenticación**. Eso es lo
+  correcto cuando el instalador se corre desde un sistema ya instalado. En el
+  medio live, donde el usuario no tiene contraseña que escribir, la regla
+  `49-vasak-installer.rules` de la ISO la releva; esa regla la envía la ISO y
+  **no** este paquete, y el plugin la borra del sistema instalado.
+-->
+<policyconfig>
+  <vendor>VasakOS</vendor>
+  <vendor_url>https://os.vasak.net.ar/</vendor_url>
+
+  <action id="ar.net.vasak.installer.run-helper">
+    <description>Install VasakOS onto a disk</description>
+    <description xml:lang="es">Instalar VasakOS en un disco</description>
+    <message>Authentication is required to partition a disk and install VasakOS onto it.</message>
+    <message xml:lang="es">Se necesita autenticación para particionar un disco e instalar VasakOS en él.</message>
+
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/vasak-installer/vasak-installer-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

@@ -1,248 +1,309 @@
-# vapp — plantilla de aplicaciones de VasakOS
+# vasak-installer — el instalador de VasakOS
 
-Punto de partida para una aplicación del escritorio: Tauri 2 + Vue 3 +
-TypeScript + Tailwind 4, con los cuatro plugins de VasakOS ya enchufados y con
-las decisiones que las aplicaciones reales tuvieron que aprender rompiéndose.
+Interfaz Tauri sobre **archinstall**. Todos los pasos se responden en la ventana;
+archinstall no muestra ninguno de sus menús.
 
-**Lo que hay acá no es andamiaje de relleno.** Cada pieza está porque su ausencia
-causó un bug concreto en `vasak-resonance`, `vasak-terminal`, `vasak-gallery` o
-`vasak-desktop`. Los comentarios del código dicen cuál.
+Reemplaza a `vasakos-calamares`. El cambio no es sólo de interfaz: calamares
+instalaba **copiando el squashfs de la ISO** (`unpackfs`), sin red y en pocos
+minutos; esto hace **`pacstrap` desde los repositorios**, así que la instalación
+necesita conexión de punta a punta, tarda entre quince minutos y una hora, y a
+cambio el sistema instalado queda con los paquetes al día en vez de con los que
+tenía la ISO el día que se armó.
 
 ---
 
-## Arrancar una aplicación nueva
+## Cómo está partido
 
-```bash
-git clone https://github.com/Vasak-OS/vapp mi-app && cd mi-app && rm -rf .git && git init
+Son **dos procesos**, y ésa es la decisión de la que cuelga todo lo demás.
+
+```text
+┌──────────────────────────┐        NDJSON        ┌──────────────────────────┐
+│ vasak-installer          │  ←───────────────→   │ vasak-installer-helper   │
+│ (usuario de la sesión)   │   stdin / stdout     │ (root, vía pkexec)       │
+│                          │                      │                          │
+│ Vue · WebView            │                      │ lsblk · openssl · parted │
+│ sondeo sin privilegios   │                      │ archinstall              │
+└──────────────────────────┘                      └───────────┬──────────────┘
+                                                              │ --plugin
+                                                  ┌───────────▼──────────────┐
+                                                  │ plugin/vasakos.py        │
+                                                  │ progreso + post-config   │
+                                                  └──────────────────────────┘
 ```
 
-Después, cambiar el nombre en **cinco lugares** —y son cinco, no uno:
+**La ventana no corre como root.** Es un motor de navegador completo, con su JIT
+y su pila de red; darle privilegios para poder llamar a `parted` cambia una
+superficie de ataque de dos comandos por una de un navegador. Hay además una
+razón visible: como root, el plugin de configuración leería `/root` en vez del
+perfil de la sesión live, y el instalador aparecería con otro tema y otros iconos
+que el escritorio que lo rodea.
 
-| archivo | qué cambiar |
-|---|---|
-| `package.json` | `name` |
-| `src-tauri/Cargo.toml` | `name`, `[lib] name` (`mi_app_lib`), `description` |
-| `src-tauri/tauri.conf.json` | `productName`, `identifier` (`ar.net.vasak.mi-app`) |
-| `index.html` | `<title>` |
-| `src-tauri/src/main.rs` | la llamada a `mi_app_lib::run()` |
+**El ayudante se lanza al llegar al paso del disco**, no al abrir la ventana. Una
+aplicación que arranca pidiendo autorización le pide a alguien que apruebe algo
+que todavía no sabe qué es. Casi todo el sondeo —`lsblk`, `/proc`, los catálogos
+de `/usr/share`— no necesita privilegios y corre en el proceso de la ventana; root
+hace falta para dos cosas: correr `os-prober` (monta particiones ajenas para
+mirar qué sistema tienen) y la instalación.
 
-El `identifier` decide dónde van la configuración y los datos del usuario:
-cambiarlo después de la primera ejecución deja huérfano lo que ya se guardó.
+---
 
-Y **verificá que los tests pasen antes de escribir nada**: si el `name` quedó a
-medio cambiar, el test de catálogos lo dice enseguida.
+## Por qué archinstall se maneja por archivo y no como librería
+
+archinstall se puede usar de dos formas: importándolo desde Python y manejando su
+clase `Installer` paso a paso, o pasándole un archivo de configuración y dejando
+que corra solo. Acá se hace lo segundo.
+
+El archivo de configuración es su **entrada versionada y documentada**: tiene un
+campo `version`, su esquema está publicado, y el propio archinstall sabe
+generarlo desde sus menús. La API de Python, en cambio, se reacomoda entre
+versiones mayores —los módulos se movieron entre la 2.x, la 3.x y la 4.x—, y un
+instalador que la usa se rompe con cada actualización del paquete.
+
+Todo lo que sabe del esquema de archinstall vive en **`archconfig.rs` y en ningún
+otro lado**: los nombres de las claves, que `Grub` va con mayúscula, que los
+tamaños son objetos con unidad y sector. Cuando archinstall cambie de versión
+mayor, ése es el único archivo que hay que revisar.
+
+### El precio de esa decisión, y cómo se paga
+
+archinstall **no emite nada legible por máquina**: todo su progreso son líneas de
+texto para humanos. Sacar la barra de progreso de adivinar la redacción de sus
+mensajes es frágil de la peor manera —un cambio de una palabra deja la barra
+quieta sin ningún error visible.
+
+Por eso el instalador envía **su propio plugin de archinstall**
+(`src-tauri/plugin/vasakos.py`). archinstall define ganchos `on_mirrors`,
+`on_genfstab`, `on_mkinitcpio`, `on_add_bootloader`, `on_user_created`,
+`on_install`… que se llaman en los puntos donde arranca cada etapa real. El
+plugin escribe NDJSON en un archivo que el ayudante sigue como un `tail -f`, y de
+ahí salen los pasos de la interfaz.
+
+El mismo plugin es donde va **la post-configuración de VasakOS**. La alternativa
+era `custom_commands` en el JSON: quince cadenas de shell sin tests, sin manejo de
+errores y sin forma de saber cuál de las quince falló.
+
+Se escribe en un archivo y no en la salida estándar porque ahí escriben también
+pacman, `mkinitcpio` y todo lo que archinstall invoca: una línea de JSON partida
+por un `print` ajeno es un evento perdido.
+
+---
+
+## Las decisiones que hay que conocer antes de tocar algo
+
+### El particionado se calcula acá, y es el código que puede borrar datos
+
+archinstall **no propone ninguna distribución de particiones desde un archivo**:
+su `disk_config` espera la lista completa con posiciones y tamaños exactos, y su
+sugerencia automática vive en los menús interactivos que no usamos.
+
+`layout.rs` es una función pura por eso: recibe un disco y devuelve particiones,
+así que se puede probar con cien discos distintos sin tocar ninguno. Lo que fija:
+
+- **1 MiB inicial** para el MBR protector y la cabecera GPT; alinea todo lo demás.
+- **ESP de 1 GiB**, no de 512 MiB. En `/boot` viven el kernel y **los dos**
+  initramfs, y cada actualización los reescribe: con 512 MiB, un sistema con dos
+  kernels y microcódigo queda al borde, y `pacman` fallando por espacio en `/boot`
+  deja un equipo que no arranca.
+- **1 MiB reservado al final** para la cabecera GPT secundaria.
+- **La raíz btrfs va sin punto de montaje propio.** Con `mountpoint` y
+  subvolúmenes a la vez, archinstall monta la partición cruda en `/` y después los
+  subvolúmenes encima: el sistema termina instalado **afuera** de `@`, y el primer
+  arranque encuentra un `@` vacío. Hay un test que lo fija.
+- **El ESP nunca va cifrado**: el firmware lo lee antes de que exista nada que
+  pueda descifrarlo.
+- Los subvolúmenes son los mismos que usaba calamares (`@`, `@home`, `@root`,
+  `@srv`, `@cache`, `@tmp`, `@log`) y no los de archinstall, para que un respaldo
+  de subvolúmenes hecho con la ISO anterior se restaure en ésta.
+
+### Los dos teclados
+
+Hay **dos** teclados que configurar y no se llaman igual. El de la consola
+(`KEYMAP` en `/etc/vconsole.conf`, que es lo que consume archinstall) llama
+`la-latin1` al latinoamericano; el del escritorio (el diseño de XKB, que usa
+Wayland y por lo tanto Wayfire) lo llama `latam`.
+
+Configurar sólo el primero es el error que se nota tarde y mal: alguien elige su
+teclado, la instalación termina bien, y **en el primer arranque no puede escribir
+su contraseña** porque el greeter quedó en `us`. La tabla de traducción está en
+`teclado.rs`, con tests contra el `base.lst` real de `xkeyboard-config`, y el
+plugin la aplica en `/etc/vasak/teclado.conf` y en `/etc/environment.d/`.
+
+### Las contraseñas
+
+Nunca van por `argv` y nunca se escriben en claro. `/proc/<pid>/cmdline` lo puede
+leer cualquier usuario, así que una contraseña en la línea de comandos es una
+contraseña publicada mientras el proceso vive.
+
+El camino es: la ventana las tiene en memoria → viajan una vez al ayudante por el
+canal NDJSON → el ayudante las pasa a `openssl passwd -6` **por entrada
+estándar** → al archivo de credenciales va sólo el hash. La ventana las olvida en
+cuanto la instalación arranca (`olvidarSecretos()`).
+
+La única que sí va en claro es la frase de LUKS, porque `cryptsetup` necesita la
+frase y no un hash. Por eso el archivo de credenciales se escribe en `/run` con
+modo `0600` —el modo va en `OpenOptions`, no en un `chmod` posterior, que deja
+una ventana abierta— y se borra al terminar.
+
+Se rechazan los caracteres de control porque `openssl passwd -stdin` lee **una
+sola línea**: un `\n` en el medio haría hashear algo distinto de lo tipeado.
+Espacios y acentos sí se aceptan; rechazarlos sería empobrecer las contraseñas
+por comodidad nuestra.
+
+### Los complementos: navegador, controladores e impresoras
+
+Elegir navegador, instalar los controladores que el hardware necesita y activar
+las impresoras son **la misma forma**: paquetes opcionales más servicios
+opcionales, elegidos en la interfaz. Resolverlos con un mecanismo y no con tres
+es lo que evita que el cuarto empiece de cero.
+
+Un complemento es un `id`, una categoría, una lista de paquetes y una de
+servicios. El catálogo vive en `complementos.toml` y se lee en tiempo de
+ejecución: **sumar un navegador es editar un archivo de datos**, sin recompilar
+ni rehacer la ISO. `archconfig.rs` funde lo elegido en `packages` y `services`.
+
+Tres reglas que sostienen el diseño:
+
+- **Ningún complemento puede ser necesario para arrancar.** Lo imprescindible
+  está en `vasakos-desktop`. Por eso un catálogo ilegible no aborta la
+  instalación: significa quedarse sin navegador, que se instala después, y no un
+  disco formateado por un archivo de datos mal editado. Hay un test que verifica
+  que ningún paquete imprescindible se haya colado en el catálogo.
+- **Los servicios son de sistema.** archinstall corre `systemctl enable` sin
+  `--user`, así que uno de usuario no lo encuentra y la instalación falla en el
+  paso de servicios.
+- **Nada viene marcado por conveniencia nuestra.** Lo que se marca solo es lo que
+  la mayoría necesita más lo que el hardware propone, y esto último se dice con
+  todas las letras al lado de la casilla.
+
+### La detección de hardware lee `/sys`, no `lspci`
+
+`hardware.rs` recorre `/sys/bus/pci/devices` y mira `vendor` y `class` de cada
+uno. Tres razones, en orden de peso: es un puñado de lecturas de archivos de doce
+bytes contra un `fork`+`exec` y la carga de `libpci`; la salida de `lspci` está
+pensada para una persona y cambia entre versiones, y un parseo que se rompe en
+silencio deja a alguien sin aceleración sin saber por qué; y `pciutils` tendría
+que estar instalado, mientras que `/sys` lo pone el kernel siempre.
+
+La clase importa tanto como el fabricante: toda GPU trae además un dispositivo de
+audio HDMI de la misma marca, así que mirando sólo el fabricante un equipo con
+audio de AMD y video de otra marca proponía el controlador equivocado. Lo mismo
+con Broadcom: sólo las inalámbricas llevan el módulo DKMS; las cableadas andan
+con el del kernel, y proponerlo las haría recompilar un módulo en cada
+actualización de kernel para nada.
+
+Todo esto es **una sugerencia**. Lo detectado llega como una casilla marcada de
+antemano con su explicación, nunca como algo que se instala solo: el controlador
+propietario de NVIDIA es una decisión con consecuencias, y tomarla por alguien
+sin decírselo es peor que no proponerla.
+
+### La lista de paquetes no está compilada
+
+`paquetes.txt` se lee en tiempo de ejecución desde
+`/usr/share/vasak-installer/paquetes.txt`, así que sumar un paquete al escritorio
+no obliga a recompilar el instalador ni a rehacer la ISO.
+
+Y es **una sola línea**: el escritorio entero es el metapaquete
+`vasakos-desktop`, que se arma en `PKGBUILDS/vasakos-desktop/` y arrastra por
+dependencia los 255 paquetes que forman VasakOS. `paquetes.txt` lo nombra a él
+y agrega el kernel; `archiso/packages.x86_64` lo nombra a él y agrega lo que
+sólo tiene sentido en el medio live. Sumar un paquete al escritorio es editarle
+las `depends` al metapaquete: ninguna de las dos listas se toca.
+
+Antes cada lista estaba escrita entera, en dos repositorios distintos y
+sincronizadas a mano. Divergían, y de la peor manera: sumar un paquete y
+olvidarse de la otra lista daba una ISO en la que la función andaba y un sistema
+instalado en el que no, diferencia que sólo aparece después de instalar.
+
+### El repositorio de VasakOS va en la configuración de archinstall
+
+En `mirror_config.custom_repositories`. Sin eso, `pacstrap` no encuentra ninguno
+de los paquetes `vasak-*` y la instalación muere en el paso del escritorio —
+**después** de haber formateado el disco. El plugin lo verifica de nuevo sobre el
+sistema instalado en `_asegurar_mirrorlist`.
+
+### La autorización
+
+La acción de polkit (`ar.net.vasak.installer.run-helper`) trae `auth_admin` por
+defecto: **pide autenticación**. La regla que la releva sin preguntar
+(`49-vasak-installer.rules`) la envía **la ISO**, no el paquete, porque sólo tiene
+sentido en el medio live, donde el usuario de autologin no tiene contraseña que
+escribir. El plugin la borra del sistema instalado; si sobreviviera, cualquiera
+del grupo `wheel` podría lanzar un proceso root sin autenticarse.
+
+La anotación `exec.path` de la acción tiene que coincidir **exactamente** con
+dónde el PKGBUILD instala el ayudante. Si no coinciden, pkexec cae en la acción
+genérica y el diálogo dice «ejecutar un programa como otro usuario» en vez de
+explicar que se va a instalar el sistema.
+
+---
+
+## Desarrollo
 
 ```bash
 bun install
-bun test                                   # frontend
+bun test                                          # frontend
 cargo test --manifest-path src-tauri/Cargo.toml   # backend
+bun run lint
 bunx --bun tauri dev
 ```
 
----
+**Compilá siempre con `tauri build`, nunca con `cargo build --release` a secas.**
+Con `cargo` el binario queda apuntando al servidor de desarrollo: la página
+«carga» vacía y todo parece roto por otra razón.
 
-## Lo que ya viene resuelto, y por qué
-
-### El marco de la ventana
-
-`WindowAppLayout` recibe el contenido en un `slot`, así que la aplicación va
-adentro:
-
-```vue
-<WindowAppLayout>
-  <MiContenido />
-</WindowAppLayout>
-```
-
-Sin ese `slot` —que es como estaba— el layout **descartaba en silencio** todo lo
-que se le pusiera dentro y la ventana abría vacía con el relleno de la plantilla
-todavía puesto. No hay ningún error: simplemente no aparece nada, y en
-vasak-monitor costó una compilación y una captura darse cuenta.
-
-### Idioma de la sesión
-
-`src-tauri/src/locales.rs` resuelve dos cosas que se rompen calladas:
-
-**Dónde están los catálogos.** El plugin sólo prueba rutas relativas al
-ejecutable y al directorio de trabajo, y **ninguna existe cuando el binario está
-en `/usr/bin`**. Sin la ruta explícita, un paquete instalado muestra las claves
-crudas (`inicio.titulo`) en lugar de los textos. Le pasó al gestor de archivos, a
-la terminal y a la galería.
-
-Al empaquetar, el PKGBUILD tiene que instalar los `.yml`:
+Para probar el ayudante sin instalar el paquete:
 
 ```bash
-install -dm755 "${pkgdir}/usr/share/${pkgname}/locales"
-install -Dm644 "$srcdir/$pkgname/src-tauri/locales/"*.yml \
-    "${pkgdir}/usr/share/${pkgname}/locales/"
+cargo build --manifest-path src-tauri/Cargo.toml
 ```
 
-**Qué idioma usar.** Se recorren `LC_ALL`, `LC_MESSAGES` y `LANG` en ese orden,
-**salteando las vacías**: `LC_ALL=""` junto a `LANG=en_US.UTF-8` es una máquina en
-inglés, y quedarse con la vacía la dejaría en español.
+y apuntar `VASAK_INSTALLER_HELPER` al binario que quedó en
+`src-tauri/target/debug/vasak-installer-helper`. Como esa ruta no coincide con la
+anotación de la acción de polkit, pkexec va a pedir contraseña de administrador:
+es lo esperado fuera del medio live.
 
-### Escribir textos traducidos
+### Probar la instalación sin arriesgar nada
 
-Todo texto que ve una persona va en los `.yml`. Nunca una cadena literal en un
-`.vue`.
-
-El `t()` del plugin toma **un solo argumento y no interpola**. La convención es el
-marcador `{0}` y `src/tools/interpolar.ts`:
-
-```ts
-import { interpolar } from '@/tools/interpolar';
-interpolar(t('inicio.saludo'), nombre);
-```
-
-**Usá el ayudante, no `replace` a mano.** `String.prototype.replace` interpreta
-`$&`, `$$`, `` $` `` y `$'` en la cadena de reemplazo: una canción llamada
-«Rock $& Roll» se mostraba como «Rock {0} Roll», y una con `$'` **perdía el texto
-que venía después**. Hay tests con los tres casos.
-
-Y no hay plurales: van dos claves con sufijo `One`/`Other` y la vista elige con
-`claveSegunCantidad()`. Sin eso se termina mostrando «1 pistas».
-
-Dos reglas de los `.yml`, las dos con test:
-
-1. **Si el valor contiene `: `, va entre comillas.** Sin ellas el parser lo lee
-   como un mapeo anidado, rompe el archivo entero y el plugin **paniquea al
-   arrancar**: la aplicación no abre. Pasó en producción.
-2. **Los idiomas tienen las mismas claves y los mismos marcadores.** Una clave que
-   falta se muestra cruda; un `{0}` que está en uno y no en el otro pierde el
-   dato.
-
-### Política de contenido
-
-`tauri.conf.json` trae una CSP con `script-src 'self'`, que es lo que bloquea la
-inyección de script. Si tu aplicación necesita algo más —una API externa en
-`connect-src`, `blob:` en `img-src`— agregalo ahí, **no la aflojes entera**.
-
-`style-src` lleva `'unsafe-inline'` a propósito: Vue escribe estilos en línea con
-`:style` y Tailwind inyecta los suyos. Esta política cubre script, no estilo.
-
-`main.ts` registra un reportador de violaciones. Hace falta porque **una violación
-de CSP no se ve**: el recurso no carga y la interfaz queda a medias sin decir
-nada. El reportador sanea las URLs antes de escribirlas —credenciales, query y
-fragmento fuera— porque ahí viajan tokens.
-
-Cuidado con las rutas absolutas de archivos: `file://` **no** está permitido, y
-está bien que no lo esté. Usá `convertFileSrc()`, que devuelve una URL del
-protocolo de assets.
-
-### Clic derecho
-
-`setupContextMenu({ iconResolver: getIconSource })` en `main.ts`. Sin eso, el
-clic derecho abre el menú del motor del navegador, con «Recargar» e «Inspeccionar
-elemento» — visiblemente ajeno al escritorio.
-
-### Tema y colores
-
-`useConfigStore()` del plugin de configuración, y `App.vue` escucha
-`config-changed` para que el cambio de tema se aplique sin reiniciar. Los colores
-salen de variables CSS (`--use-*`), no de valores fijos.
-
-### Iconos
-
-`useReactiveIcon()` en `src/composables/`. Reactivo porque el pack de iconos
-puede cambiar en caliente.
+En una máquina virtual con un disco vacío. `archinstall --dry-run` existe, pero
+el instalador no lo expone todavía: es lo primero que conviene sumar si se va a
+trabajar sobre el flujo de instalación.
 
 ---
 
 ## Tests
 
-**Cada cambio va con tests, en el mismo commit.** Y si el repo tiene poca
-cobertura, se suman algunos de lo que está alrededor: así sube mientras se
-avanza, en lugar de necesitar una campaña de testing que nunca llega.
+**Cada cambio va con tests, en el mismo commit.** Lo que conviene probar es lo
+que se rompe callado. Dos ejemplos de este repo, los dos encontrados por sus
+tests antes de llegar a ninguna máquina:
 
-Lo que conviene probar es **lo que se rompe callado**: parsers, recortes de
-texto, límites, entradas mal formadas, plurales, marcadores de interpolación. No
-la interfaz.
+- **`lsblk --json` sin `--tree` devuelve una lista plana**, con las particiones
+  como hermanas de su propio disco y no anidadas. Leer `children` daba todo disco
+  sin particiones — y con eso se caía la comprobación de «está en uso», que es la
+  que impide formatear el pendrive del que se arrancó, porque el disco no está
+  montado: lo está su partición. Ahora se asocia por `PKNAME`.
+- **`lsblk` informa `/dev/zram0` con tipo `disk`**, y VasakOS activa zram por
+  defecto, así que aparece en todo equipo. Sin el filtro de pseudodispositivos se
+  ofrecía como destino de instalación.
 
-La plantilla trae los dos lados armados:
-
-- `tests/interpolar.test.ts` — la interpolación, con los tres casos del `$`.
-- `src-tauri/tests/locales.rs` — que los catálogos parseen, tengan las mismas
-  claves, ningún texto vacío y los marcadores coincidan. Recorre el árbol
-  **completo**: cuando sólo bajaba dos niveles, un grupo anidado más abajo quedaba
-  sin comprobar y encima aparecía como texto vacío, porque un mapeo no es una
-  cadena — el test fallaba justo donde no miraba.
-- `src-tauri/src/locales.rs` — la detección de idioma.
-
-**Verificá que un test sirve reintroduciendo el bug a propósito** y viendo que
-falle. Un test que pasa siempre no prueba nada.
-
-Dos trampas al extraer lógica para poder probarla:
-
-- Separá el parseo de la I/O. Ese refactor es el que suele destapar el bug —así
-  apareció un panic por recortar UTF-8 por bytes en la terminal.
-- No dejes un `catch` vacío. Tragarse el error hace imposible saber si la llamada
-  llegó, y cuesta horas de diagnóstico.
+Verificá que un test sirve reintroduciendo el bug a propósito y viendo que falle.
 
 ---
 
-## Compilar y empaquetar
+## Lo que falta
 
-```bash
-bun run lint          # biome
-bun test
-cargo test --manifest-path src-tauri/Cargo.toml
-bunx --bun tauri build
-```
-
-**Compilá siempre con `tauri build`, nunca con `cargo build --release` a secas.**
-Con `cargo` el binario queda apuntando al servidor de desarrollo: la página
-«carga» vacía, no ejecuta nada de JavaScript, y todo parece roto por otra razón.
-Perdí una tarde con eso.
-
-El PKGBUILD necesita, además de los `.yml` de arriba:
-
-- `options=('!lto')` — makepkg inyecta `-flto` global y los crates que compilan C
-  o assembly emiten bitcode que el enlazador de rustc no resuelve. Cargo ya hace
-  su propio LTO.
-- `RUSTFLAGS="-C target-cpu=x86-64"` y `unset CARGO_ENCODED_RUSTFLAGS` — el
-  `target-cpu=native` de la máquina que compila produce binarios que mueren con
-  SIGILL en cualquier CPU más vieja.
-
----
-
-## Rendimiento: lo que aprendimos a no hacer
-
-Estas aplicaciones corren en el escritorio de alguien, y su JavaScript comparte
-hilo con el dibujado. Un cálculo de 30 ms son dos cuadros perdidos.
-
-- **No sondees si podés escuchar.** Y si tenés que sondear, pausá con
-  `document.hidden`: nadie lee una pantalla que no está en pantalla.
-- **Un temporizador, no N.** Un `setInterval` por elemento se multiplica sin que
-  se note.
-- **Un reloj sin segundos despierta al minuto**, no a 1 Hz. 59 de cada 60
-  despertares no cambian un píxel, y `toLocaleTimeString` no es gratis.
-- **Lo pesado va en Rust.** Decodificar imágenes o video, hashear, recorrer
-  árboles de archivos: en el backend, y que cruce el IPC una ruta, no los bytes.
-- **No copies para notificar.** Un `{ ...objeto, clave: valor }` sobre un `ref`
-  reactivo copia todo el objeto en cada cambio; asignar la clave ya notifica.
-
----
-
-## Estructura
-
-```
-src/
-  App.vue                 tema y configuración; el marco de la ventana
-  main.ts                 plugins, CSP, i18n, menú contextual
-  assets/main.css         Tailwind y las variables del tema
-  components/topbar/      la barra de título propia (la ventana no tiene decoración)
-  composables/            useReactiveIcon y compañía
-  layouts/                WindowAppLayout
-  tools/interpolar.ts     interpolación y plurales de textos traducidos
-tests/                    tests del frontend (bun test)
-src-tauri/
-  src/lib.rs              registro de plugins
-  src/locales.rs          resolución de idioma y de la ruta de catálogos
-  locales/{es,en}.yml     los textos
-  tests/locales.rs        validación de los catálogos
-  capabilities/           permisos por ventana
-  tauri.conf.json         ventana, CSP, empaquetado
-```
+- **Probarlo de verdad.** Nada de esto se ejecutó todavía contra un disco: hace
+  falta una máquina virtual con la ISO armada.
+- **`--dry-run` expuesto en la interfaz**, para poder recorrer el flujo entero
+  sin escribir.
+- **Usar particiones existentes** en vez de borrar el disco entero. La estructura
+  ya lo contempla (`EsquemaDisco` tiene una sola variante y `wipe` está en una
+  sola clave), pero no hay interfaz.
+- **Más complementos**: el mecanismo está y agregar uno es editar
+  `complementos.toml`. Faltan al menos audio profesional, virtualización y los
+  controladores de tabletas gráficas.
+- **Progreso fino durante `pacstrap`**, que es el paso largo. Hoy la barra se
+  mueve por etapas; el conteo `(12/1543)` de pacman está en el registro y se
+  podría parsear.
 
 ## Licencia
 

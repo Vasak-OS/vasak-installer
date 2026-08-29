@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install VasakOS
+Name[es]=Instalar VasakOS
+GenericName=System Installer
+GenericName[es]=Instalador del sistema
+Comment=Install VasakOS onto this computer
+Comment[es]=Instalar VasakOS en este equipo
+Exec=vasak-installer
+Icon=vasak-installer
+Terminal=false
+Categories=System;Settings;
+Keywords=install;installer;setup;arch;
+Keywords[es]=instalar;instalador;instalación;
+StartupNotify=true
