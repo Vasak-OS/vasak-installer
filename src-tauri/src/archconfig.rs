@@ -61,8 +61,13 @@ const KERNELS: &[&str] = &["linux"];
 /// escritorio no puede obligar a recompilar el instalador.
 ///
 /// El formato es deliberadamente tonto —un paquete por línea, `#` comenta— para
-/// que el archivo se pueda generar y diferenciar contra `packages.x86_64` de la
-/// ISO con herramientas de texto.
+/// que el archivo se pueda leer y diferenciar con herramientas de texto contra
+/// `packages.x86_64` de la ISO, que tiene la misma forma.
+///
+/// Desde el metapaquete `vasakos-desktop` la lista es corta: ese paquete
+/// arrastra el escritorio entero por dependencia, y acá sólo queda él más el
+/// kernel. El parseo sigue existiendo igual porque el archivo tiene que poder
+/// crecer sin recompilar nada.
 pub fn leer_paquetes(contenido: &str) -> Vec<String> {
     contenido
         .lines()
@@ -444,38 +449,54 @@ zsh";
         let contenido = include_str!("../paquetes.txt");
         let paquetes = leer_paquetes(contenido);
 
-        assert!(paquetes.len() > 100, "salieron {} paquetes", paquetes.len());
         // Ninguno con espacios ni con `#`: eso sería el parseo dejando pasar
-        // basura que pacman rechaza.
+        // basura que pacman rechaza. Importa más que antes, porque ahora el
+        // archivo es casi todo comentario.
         for p in &paquetes {
             assert!(!p.contains(' '), "«{p}» tiene un espacio");
             assert!(!p.contains('#'), "«{p}» tiene un numeral");
         }
-        // Lo que no puede faltar, porque sin ellos el sistema instalado no
-        // arranca al escritorio.
-        for imprescindible in [
-            "vasak-desktop",
-            "vasak-session-manager",
-            "greetd",
-            "wayfire",
-            "networkmanager",
-            "vasakos-keyring",
-            "vasakos-mirrorlist",
-            "grub",
-        ] {
+        // Lo que no puede faltar. `vasakos-desktop` es el escritorio entero:
+        // arrastra por dependencia `vasak-desktop`, `vasak-session-manager`,
+        // `greetd`, `wayfire`, `networkmanager`, `grub` y los llaveros, que es
+        // lo que esta prueba enumeraba de a uno cuando la lista estaba escrita
+        // acá. Sin él la instalación termina en una consola de texto.
+        //
+        // Que ese metapaquete tenga las dependencias correctas es asunto de su
+        // PKGBUILD, que vive en otro repositorio: nombrarlas de nuevo desde acá
+        // sería reinventar las dos fuentes de verdad que el metapaquete vino a
+        // eliminar.
+        for imprescindible in ["vasakos-desktop", "linux", "linux-headers"] {
             assert!(
                 paquetes.iter().any(|p| p == imprescindible),
                 "falta {imprescindible} en paquetes.txt"
             );
         }
-        // Y lo que no puede estar: el instalador anterior se removía a sí mismo
-        // en el sistema instalado, y calamares no tiene por qué viajar.
-        for sobra in ["vasakos-calamares", "vasakos-calamares-config", "mkinitcpio-archiso"] {
+        // Y lo que no puede estar: lo que sólo sirve en el medio live, que se
+        // queda en `packages.x86_64`. El instalador anterior se removía a sí
+        // mismo del sistema instalado, y calamares no tiene por qué viajar.
+        for sobra in [
+            "vasakos-calamares",
+            "vasakos-calamares-config",
+            "mkinitcpio-archiso",
+            "vasak-installer",
+            "archinstall",
+            "memtest86+",
+            "syslinux",
+        ] {
             assert!(
                 !paquetes.iter().any(|p| p == sobra),
                 "{sobra} no tendría que estar en el sistema instalado"
             );
         }
+        // El archivo se redujo al metapaquete: si vuelve a tener decenas de
+        // entradas es que alguien copió la lista de la ISO de vuelta acá, que
+        // es exactamente la divergencia que se sacó de encima.
+        assert!(
+            paquetes.len() < 10,
+            "salieron {} paquetes; el escritorio va en las depends de              vasakos-desktop, no acá",
+            paquetes.len()
+        );
     }
 
     #[test]
