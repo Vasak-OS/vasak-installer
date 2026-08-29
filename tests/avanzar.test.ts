@@ -227,6 +227,78 @@ describe('los secretos', () => {
 	});
 });
 
+describe('los complementos', () => {
+	function conCatalogo() {
+		const store = almacenCompleto();
+		store.complementos = {
+			catalogo: [
+				{ id: 'firefox', categoria: 'navegador', paquetes: ['firefox'], servicios: [], icono: 'firefox', detectar: null, exclusivo: true, por_defecto: true },
+				{ id: 'chromium', categoria: 'navegador', paquetes: ['chromium'], servicios: [], icono: 'chromium', detectar: null, exclusivo: true, por_defecto: false },
+				{ id: 'impresoras', categoria: 'impresoras', paquetes: ['cups'], servicios: ['cups.socket'], icono: 'printer', detectar: null, exclusivo: false, por_defecto: false },
+				{ id: 'juegos', categoria: 'extras', paquetes: ['steam'], servicios: [], icono: 'input-gaming', detectar: null, exclusivo: false, por_defecto: false },
+			],
+			categorias: ['navegador', 'impresoras', 'extras'],
+			hardware: { marcas: [], descripciones: [] },
+			preseleccion: ['firefox'],
+			error: null,
+		};
+		store.eleccion.complementos = ['firefox'];
+		return store;
+	}
+
+	test('siempre se puede pasar el paso: todo es opcional', () => {
+		const store = useInstalacionStore();
+		expect(store.puedeAvanzar('complementos')).toBe(true);
+	});
+
+	test('elegir otro navegador saca al anterior', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('chromium');
+		// Dos navegadores marcados a la vez es un estado que el grupo de opciones
+		// no puede dibujar, y el plan instalaría los dos.
+		expect(store.eleccion.complementos).toEqual(['chromium']);
+	});
+
+	test('volver a apretar el navegador elegido no lo desmarca', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('firefox');
+		// En un grupo del que se elige uno, no existe «ninguno»: para eso está la
+		// opción explícita «Ninguno» del catálogo.
+		expect(store.eleccion.complementos).toEqual(['firefox']);
+	});
+
+	test('los que no son excluyentes se marcan y se desmarcan', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('impresoras');
+		expect(store.eleccion.complementos).toContain('impresoras');
+		store.alternarComplemento('impresoras');
+		expect(store.eleccion.complementos).not.toContain('impresoras');
+		// Y no se llevó puesto al navegador.
+		expect(store.eleccion.complementos).toContain('firefox');
+	});
+
+	test('el orden es el del catálogo y no el de marcado', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('juegos');
+		store.alternarComplemento('impresoras');
+		// Así el resumen enumera siempre igual y dos instalaciones con la misma
+		// elección se pueden comparar.
+		expect(store.eleccion.complementos).toEqual(['firefox', 'impresoras', 'juegos']);
+	});
+
+	test('un id que no está en el catálogo no hace nada', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('no-existe');
+		expect(store.eleccion.complementos).toEqual(['firefox']);
+	});
+
+	test('el plan lleva los elegidos', () => {
+		const store = conCatalogo();
+		store.alternarComplemento('impresoras');
+		expect(store.armarPlan().complementos).toEqual(['firefox', 'impresoras']);
+	});
+});
+
 describe('el registro', () => {
 	test('no crece sin límite', () => {
 		const store = useInstalacionStore();

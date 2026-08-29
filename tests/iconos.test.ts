@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { ICONO_PASO, todosLosIconos } from '../src/tools/iconos';
 import { PASOS } from '../src/stores/instalacion';
@@ -111,6 +111,30 @@ describe('los iconos que nombra el instalador', () => {
 		for (const nombre of todosLosIconos()) {
 			expect(nombre.endsWith('-symbolic')).toBe(false);
 		}
+	});
+
+	/**
+	 * Los iconos del catálogo de complementos también tienen que existir.
+	 *
+	 * Viven en un archivo de datos editable, así que no hay ningún compilador que
+	 * los mire: sumar un navegador con un icono mal escrito deja un hueco en
+	 * blanco al lado de su nombre y no falla nada.
+	 *
+	 * Se sacan con una expresión regular en vez de parsear el TOML: es un archivo
+	 * nuestro con una forma conocida, y traer un parser al frontend sólo para
+	 * este test sería una dependencia por un `grep`.
+	 */
+	test('los iconos del catálogo de complementos existen', () => {
+		if (!hayTema) return;
+
+		const toml = readFileSync('src-tauri/complementos.toml', 'utf8');
+		const iconos = [...toml.matchAll(/^icono\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
+
+		expect(iconos.length).toBeGreaterThan(5);
+		const faltantes = iconos.filter(
+			(nombre) => !disponibles.has(`${nombre}-symbolic`) && !disponibles.has(nombre)
+		);
+		expect(faltantes).toEqual([]);
 	});
 
 	test('ningún nombre lleva extensión ni ruta', () => {

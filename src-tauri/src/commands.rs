@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
+use crate::complementos::{self, Complemento};
+use crate::hardware::{self, Hardware};
 use crate::layout::{self, Disco, Firmware, Rol};
 use crate::probe::{self, Sistema};
 use crate::protocol::{CuerpoPeticion, Paso, PlanInstalacion, SistemaArchivos};
@@ -86,6 +88,51 @@ pub fn sondear_sistema() -> Sistema {
 #[tauri::command]
 pub fn sondear_discos() -> Result<Vec<Disco>, String> {
     probe::sondear_discos()
+}
+
+/// El catálogo de complementos y lo que se detectó del equipo.
+///
+/// Los dos juntos en una llamada porque la vista los necesita juntos: sin el
+/// hardware no sabe cuáles proponer marcados, y sin el catálogo no sabe qué
+/// mostrar. Dos llamadas serían dos idas y vueltas para dibujar una pantalla.
+#[derive(Debug, Serialize)]
+pub struct Complementos {
+    pub catalogo: Vec<Complemento>,
+    pub categorias: Vec<&'static str>,
+    pub hardware: Hardware,
+    /// Los que vienen marcados: los de `por_defecto` y los que propone el
+    /// hardware. Nada más.
+    pub preseleccion: Vec<String>,
+    /// Por qué no hay catálogo, si no lo hay. La vista lo muestra en vez de
+    /// quedarse vacía sin explicación.
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn complementos_disponibles() -> Complementos {
+    let hw = hardware::detectar();
+    match complementos::cargar() {
+        Ok(catalogo) => {
+            let preseleccion = complementos::preseleccion(&catalogo, &hw.marcas);
+            Complementos {
+                catalogo,
+                categorias: complementos::Categoria::TODAS.iter().map(|c| c.clave()).collect(),
+                hardware: hw,
+                preseleccion,
+                error: None,
+            }
+        }
+        // Sin catálogo el paso se salta solo, no se rompe: los complementos son
+        // opcionales por definición, y una instalación sin ellos es un sistema
+        // que arranca y en el que todo esto se puede sumar después.
+        Err(e) => Complementos {
+            catalogo: Vec::new(),
+            categorias: Vec::new(),
+            hardware: hw,
+            preseleccion: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
 }
 
 #[tauri::command]
@@ -313,6 +360,28 @@ pub fn instalar(
         .map_err(|e| format!("el idioma del sistema no es válido: {e}"))?;
     validar::teclado(&plan.teclado)
         .map_err(|e| format!("la distribución de teclado no es válida: {e}"))?;
+
+    // Los complementos elegidos tienen que existir en el catálogo. No es
+    // paranoia sobre el frontend: el catálogo es un archivo editable, y uno que
+    // se renombró entre que la interfaz lo leyó y que se apretó Instalar dejaría
+    // a alguien sin el navegador que eligió, sin ningún aviso. Es mejor decirlo
+    // antes de formatear.
+    if let Ok(catalogo) = complementos::cargar() {
+        let conocidos: std::collections::BTreeSet<&str> =
+            catalogo.iter().map(|c| c.id.as_str()).collect();
+        let desconocidos: Vec<&str> = plan
+            .complementos
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !conocidos.contains(id))
+            .collect();
+        if !desconocidos.is_empty() {
+            return Err(format!(
+                "estos complementos ya no están en el catálogo: {}",
+                desconocidos.join(", ")
+            ));
+        }
+    }
     if plan.secretos.usuario.is_empty() {
         return Err("falta la contraseña del usuario".into());
     }

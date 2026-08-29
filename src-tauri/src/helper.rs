@@ -435,6 +435,34 @@ fn instalar(
     let ruta_plugin =
         archconfig::ruta_plugin().ok_or_else(|| "no se encontró el plugin de archinstall".to_string())?;
 
+    // Los complementos elegidos → los paquetes y servicios que suman.
+    //
+    // Un catálogo ilegible **no** aborta la instalación: significa quedarse sin
+    // navegador y sin controladores opcionales, que es un sistema que arranca y
+    // en el que todo eso se puede instalar después. Abortar acá dejaría el disco
+    // formateado por un archivo de datos mal editado.
+    let aporte = match crate::complementos::cargar() {
+        Ok(catalogo) => crate::complementos::aporte_de(&catalogo, &plan.complementos),
+        Err(e) => {
+            log(
+                salida,
+                Nivel::Warn,
+                format!(
+                    "no se pudo leer el catálogo de complementos ({e}); se instala el escritorio \
+                     sin navegador ni controladores opcionales"
+                ),
+            );
+            crate::complementos::Aporte::default()
+        }
+    };
+    if !aporte.paquetes.is_empty() {
+        log(
+            salida,
+            Nivel::Info,
+            format!("complementos: {}", aporte.paquetes.join(", ")),
+        );
+    }
+
     // ── Los archivos que lee archinstall ───────────────────────────────────
 
     std::fs::create_dir_all(DIR_TRABAJO)
@@ -455,6 +483,7 @@ fn instalar(
         disco.sector_logico,
         firmware,
         &paquetes,
+        &aporte,
         version_archinstall().as_deref(),
     );
     let creds = archconfig::credenciales(
@@ -805,6 +834,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Si un proceso sigue vivo de verdad.
+    ///
+    /// Se mira `/proc/<pid>/stat` y no `kill(pid, 0)`. Un proceso muerto sigue
+    /// **existiendo** como zombi hasta que alguien lo recoge, y el padre de este
+    /// nieto acaba de morir, así que hay que esperar a que lo adopte y lo recoja
+    /// init: durante esa ventana `kill(pid, 0)` devuelve cero y el nieto parece
+    /// vivo. El estado del proceso no tiene esa ambigüedad — `Z` es zombi, o sea
+    /// ya muerto.
+    ///
+    /// El campo del estado va entre el nombre del ejecutable —que puede tener
+    /// paréntesis y espacios adentro— y el resto, así que se corta después del
+    /// último `)`.
+    fn esta_vivo(pid: i32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            // Ya no existe: recogido.
+            Err(_) => false,
+            Ok(stat) => match stat.rsplit_once(')') {
+                Some((_, resto)) => resto.split_whitespace().next() != Some("Z"),
+                None => false,
+            },
+        }
+    }
+
     /// Matar el grupo mata también a los nietos.
     ///
     /// Ésta es la propiedad que hace que «cancelar» signifique algo: archinstall
@@ -857,15 +909,24 @@ mod tests {
         // muerto. El campo va entre el nombre del ejecutable —que puede tener
         // paréntesis y espacios adentro— y el resto, así que se corta después
         // del último `)`.
-        let ruta = format!("/proc/{nieto}/stat");
-        let vive = match std::fs::read_to_string(&ruta) {
-            // Ya no existe: recogido.
-            Err(_) => false,
-            Ok(stat) => match stat.rsplit_once(')') {
-                Some((_, resto)) => resto.split_whitespace().next() != Some("Z"),
-                None => false,
-            },
-        };
+        // `kill` sólo **encola** la señal: SIGKILL se procesa cuando el núcleo
+        // vuelve a planificar ese proceso. Mirando una sola vez, el test falla
+        // de vez en cuando con el código correcto —y falla más seguido cuando la
+        // suite corre en paralelo y hay presión de planificación—, que es la
+        // peor clase de test: el que hace desconfiar de un arreglo que está bien.
+        //
+        // Se espera acotado. Dos segundos es holgadísimo para una señal que
+        // normalmente llega en microsegundos, y sigue fallando rápido si el
+        // grupo de verdad no recibió nada.
+        let limite = std::time::Instant::now() + Duration::from_secs(2);
+        let mut vive = true;
+        while std::time::Instant::now() < limite {
+            vive = esta_vivo(nieto);
+            if !vive {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(!vive, "el nieto {nieto} sobrevivió a la cancelación del grupo");
     }
 

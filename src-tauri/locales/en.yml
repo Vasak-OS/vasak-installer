@@ -57,6 +57,9 @@ pasos:
   cuenta:
     titulo: Account
     descripcion: Your user and the computer
+  complementos:
+    titulo: Add-ons
+    descripcion: Browser, drivers and extras
   resumen:
     titulo: Summary
     descripcion: Review before installing
@@ -229,6 +232,93 @@ cuenta:
     installs, but afterwards you won't be able to install software or change
     settings without booting from another medium.
 
+complementos:
+  titulo: What else do you want installed
+  intro: >-
+    Everything on this screen is optional and can be installed later from the
+    system. What comes ticked is what most people need.
+  sinCatalogoTitulo: "The add-on list couldn't be read"
+  sinCatalogo: >-
+    The system installs either way, with the full desktop, but without a browser
+    or optional drivers. They can be added later.
+  detectado: What we found in your computer
+  detectadoAyuda: >-
+    Some drivers were ticked based on this. Untick them if you would rather use
+    the open-source ones.
+  propuestoPorHardware: Ticked because we found this device
+  sePuedeDespues: >-
+    None of this is needed for the system to boot. If in doubt, leave it as it is
+    and decide later.
+  categorias:
+    navegador:
+      titulo: Browser
+      descripcion: "Pick one. It is what will open links."
+    drivers:
+      titulo: Drivers
+      descripcion: >-
+        For the graphics and network cards. The open-source ones are already
+        installed; these are the additions.
+    impresoras:
+      titulo: Printers and scanners
+      descripcion: >-
+        They do not need to be connected right now. If you are going to use one,
+        turn it on.
+    extras:
+      titulo: Applications
+      descripcion: Large packages not everyone wants.
+  items:
+    firefox:
+      nombre: Firefox
+      descripcion: "Mozilla's browser. The one VasakOS ships by default."
+    chromium:
+      nombre: Chromium
+      descripcion: "The open-source base of Chrome, without Google's additions."
+    brave:
+      nombre: Brave
+      descripcion: Chromium-based, with ad and tracker blocking built in.
+    sin-navegador:
+      nombre: None
+      descripcion: >-
+        The system ends up with no browser. You will need another computer to
+        download one.
+    impresoras:
+      nombre: Printing
+      descripcion: >-
+        CUPS and the open-source drivers, HP included. Network printers are found
+        automatically.
+    escaner:
+      nombre: Scanning
+      descripcion: SANE and a simple scanning application.
+    nvidia-propietario:
+      nombre: NVIDIA driver (proprietary)
+      descripcion: >-
+        NVIDIA's own. Faster in games and video, but closed source, and it can
+        cause trouble with Wayland on older cards.
+    nvidia-libre:
+      nombre: NVIDIA driver (open source)
+      descripcion: >-
+        Nouveau. Works with Wayland without surprises and is considerably slower
+        at 3D.
+    amd-vulkan:
+      nombre: AMD acceleration
+      descripcion: Vulkan and hardware video decoding for AMD cards.
+    intel-vulkan:
+      nombre: Intel acceleration
+      descripcion: Vulkan and hardware video decoding for Intel graphics.
+    broadcom-wifi:
+      nombre: Broadcom Wi-Fi
+      descripcion: >-
+        The module some Broadcom wireless cards need in order to work.
+    ofimatica:
+      nombre: Office
+      descripcion: LibreOffice with Spanish and English dictionaries.
+    desarrollo:
+      nombre: Development
+      descripcion: The build tools, git and a code editor.
+    juegos:
+      nombre: Games
+      descripcion: Steam, Lutris and Wine. They take up a fair amount of space.
+
 resumen:
   titulo: Before installing
   intro: Check that everything is right. Confirming starts writing to the disk.
@@ -261,6 +351,8 @@ resumen:
   campoPaquetes: Packages
   # `{0}` is the number of packages.
   paquetesCantidad: "{0} packages"
+  campoComplementos: Add-ons
+  ningunComplemento: None
   confirmar: Install now
   autorizacionTitulo: Authorisation needed
   autorizacion: >-

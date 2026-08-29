@@ -57,6 +57,9 @@ pasos:
   cuenta:
     titulo: Cuenta
     descripcion: Tu usuario y el equipo
+  complementos:
+    titulo: Complementos
+    descripcion: Navegador, controladores y extras
   resumen:
     titulo: Resumen
     descripcion: Revisá antes de instalar
@@ -230,6 +233,92 @@ cuenta:
     sistema se instala, pero después no vas a poder instalar programas ni cambiar
     la configuración sin arrancar desde otro medio.
 
+complementos:
+  titulo: Qué más querés instalar
+  intro: >-
+    Todo lo de esta pantalla es opcional y se puede instalar después desde el
+    sistema. Lo que viene marcado es lo que la mayoría necesita.
+  sinCatalogoTitulo: No se pudo leer la lista de complementos
+  sinCatalogo: >-
+    El sistema se instala igual, con el escritorio completo, pero sin navegador
+    ni controladores opcionales. Se pueden agregar después.
+  detectado: Lo que encontramos en tu equipo
+  detectadoAyuda: >-
+    Según esto se marcaron algunos controladores. Podés desmarcarlos si preferís
+    los libres.
+  propuestoPorHardware: Marcado porque encontramos este dispositivo
+  sePuedeDespues: >-
+    Nada de esto hace falta para que el sistema arranque. Si dudás, dejalo como
+    está y decidilo más adelante.
+  categorias:
+    navegador:
+      titulo: Navegador
+      descripcion: Elegí uno. Es el que va a abrir los enlaces.
+    drivers:
+      titulo: Controladores
+      descripcion: >-
+        Para la placa de video y la de red. Los libres ya están instalados; acá
+        van los que se suman.
+    impresoras:
+      titulo: Impresoras y escáneres
+      descripcion: >-
+        No hace falta que estén conectados ahora. Si vas a usar alguno, activalo.
+    extras:
+      titulo: Aplicaciones
+      descripcion: Paquetes grandes que no todo el mundo quiere.
+  items:
+    firefox:
+      nombre: Firefox
+      descripcion: El navegador de Mozilla. Es el que trae VasakOS por defecto.
+    chromium:
+      nombre: Chromium
+      descripcion: La base libre de Chrome, sin los agregados de Google.
+    brave:
+      nombre: Brave
+      descripcion: Basado en Chromium, con bloqueo de publicidad y rastreo incluido.
+    sin-navegador:
+      nombre: Ninguno
+      descripcion: >-
+        El sistema queda sin navegador. Vas a necesitar otro equipo para
+        descargarlo.
+    impresoras:
+      nombre: Impresión
+      descripcion: >-
+        CUPS y los controladores libres, incluidos los de HP. Las impresoras de
+        red se detectan solas.
+    escaner:
+      nombre: Escaneo
+      descripcion: SANE y una aplicación simple para escanear.
+    nvidia-propietario:
+      nombre: Controlador de NVIDIA (propietario)
+      descripcion: >-
+        El de NVIDIA. Rinde más en juegos y en video, pero es código cerrado y
+        puede dar problemas con Wayland en placas viejas.
+    nvidia-libre:
+      nombre: Controlador de NVIDIA (libre)
+      descripcion: >-
+        Nouveau. Anda con Wayland sin sobresaltos y rinde bastante menos en 3D.
+    amd-vulkan:
+      nombre: Aceleración de AMD
+      descripcion: Vulkan y decodificación de video por hardware para placas AMD.
+    intel-vulkan:
+      nombre: Aceleración de Intel
+      descripcion: Vulkan y decodificación de video por hardware para gráficos Intel.
+    broadcom-wifi:
+      nombre: Wi-Fi de Broadcom
+      descripcion: >-
+        El módulo que necesitan algunas placas inalámbricas de Broadcom para
+        funcionar.
+    ofimatica:
+      nombre: Oficina
+      descripcion: LibreOffice con los diccionarios de español e inglés.
+    desarrollo:
+      nombre: Desarrollo
+      descripcion: Las herramientas de compilación, git y un editor de código.
+    juegos:
+      nombre: Juegos
+      descripcion: Steam, Lutris y Wine. Ocupan bastante espacio.
+
 resumen:
   titulo: Antes de instalar
   intro: Revisá que todo esté bien. Al confirmar se empieza a escribir en el disco.
@@ -262,6 +351,8 @@ resumen:
   campoPaquetes: Paquetes
   # `{0}` es la cantidad de paquetes.
   paquetesCantidad: "{0} paquetes"
+  campoComplementos: Complementos
+  ningunComplemento: Ninguno
   confirmar: Instalar ahora
   autorizacionTitulo: Falta la autorización
   autorizacion: >-

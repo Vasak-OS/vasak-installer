@@ -22,6 +22,7 @@ export const ICONO_PASO: Record<Paso, string> = {
 	teclado: 'input-keyboard',
 	disco: 'drive-harddisk',
 	cuenta: 'avatar-default',
+	complementos: 'packages-app',
 	resumen: 'document-properties',
 	instalacion: 'system-software-install',
 	fin: 'object-select',

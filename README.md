@@ -149,6 +149,53 @@ sola línea**: un `\n` en el medio haría hashear algo distinto de lo tipeado.
 Espacios y acentos sí se aceptan; rechazarlos sería empobrecer las contraseñas
 por comodidad nuestra.
 
+### Los complementos: navegador, controladores e impresoras
+
+Elegir navegador, instalar los controladores que el hardware necesita y activar
+las impresoras son **la misma forma**: paquetes opcionales más servicios
+opcionales, elegidos en la interfaz. Resolverlos con un mecanismo y no con tres
+es lo que evita que el cuarto empiece de cero.
+
+Un complemento es un `id`, una categoría, una lista de paquetes y una de
+servicios. El catálogo vive en `complementos.toml` y se lee en tiempo de
+ejecución: **sumar un navegador es editar un archivo de datos**, sin recompilar
+ni rehacer la ISO. `archconfig.rs` funde lo elegido en `packages` y `services`.
+
+Tres reglas que sostienen el diseño:
+
+- **Ningún complemento puede ser necesario para arrancar.** Lo imprescindible
+  está en `vasakos-desktop`. Por eso un catálogo ilegible no aborta la
+  instalación: significa quedarse sin navegador, que se instala después, y no un
+  disco formateado por un archivo de datos mal editado. Hay un test que verifica
+  que ningún paquete imprescindible se haya colado en el catálogo.
+- **Los servicios son de sistema.** archinstall corre `systemctl enable` sin
+  `--user`, así que uno de usuario no lo encuentra y la instalación falla en el
+  paso de servicios.
+- **Nada viene marcado por conveniencia nuestra.** Lo que se marca solo es lo que
+  la mayoría necesita más lo que el hardware propone, y esto último se dice con
+  todas las letras al lado de la casilla.
+
+### La detección de hardware lee `/sys`, no `lspci`
+
+`hardware.rs` recorre `/sys/bus/pci/devices` y mira `vendor` y `class` de cada
+uno. Tres razones, en orden de peso: es un puñado de lecturas de archivos de doce
+bytes contra un `fork`+`exec` y la carga de `libpci`; la salida de `lspci` está
+pensada para una persona y cambia entre versiones, y un parseo que se rompe en
+silencio deja a alguien sin aceleración sin saber por qué; y `pciutils` tendría
+que estar instalado, mientras que `/sys` lo pone el kernel siempre.
+
+La clase importa tanto como el fabricante: toda GPU trae además un dispositivo de
+audio HDMI de la misma marca, así que mirando sólo el fabricante un equipo con
+audio de AMD y video de otra marca proponía el controlador equivocado. Lo mismo
+con Broadcom: sólo las inalámbricas llevan el módulo DKMS; las cableadas andan
+con el del kernel, y proponerlo las haría recompilar un módulo en cada
+actualización de kernel para nada.
+
+Todo esto es **una sugerencia**. Lo detectado llega como una casilla marcada de
+antemano con su explicación, nunca como algo que se instala solo: el controlador
+propietario de NVIDIA es una decisión con consecuencias, y tomarla por alguien
+sin decírselo es peor que no proponerla.
+
 ### La lista de paquetes no está compilada
 
 `paquetes.txt` se lee en tiempo de ejecución desde
@@ -251,6 +298,9 @@ Verificá que un test sirve reintroduciendo el bug a propósito y viendo que fal
 - **Usar particiones existentes** en vez de borrar el disco entero. La estructura
   ya lo contempla (`EsquemaDisco` tiene una sola variante y `wipe` está en una
   sola clave), pero no hay interfaz.
+- **Más complementos**: el mecanismo está y agregar uno es editar
+  `complementos.toml`. Faltan al menos audio profesional, virtualización y los
+  controladores de tabletas gráficas.
 - **Progreso fino durante `pacstrap`**, que es el paso largo. Hoy la barra se
   mueve por etapas; el conteo `(12/1543)` de pacman está en el registro y se
   podría parsear.

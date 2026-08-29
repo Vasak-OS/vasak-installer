@@ -20,6 +20,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
+use crate::complementos::Aporte;
 use crate::layout::{Firmware, ParticionPlaneada};
 use crate::protocol::PlanInstalacion;
 
@@ -156,8 +157,27 @@ pub fn configuracion(
     sector_logico: u64,
     firmware: Firmware,
     paquetes: &[String],
+    aporte: &Aporte,
     version_archinstall: Option<&str>,
 ) -> Value {
+    // Los complementos se funden acá y no en `paquetes.txt`: lo de ahí es el
+    // escritorio, que es siempre el mismo; esto es lo que eligió esta persona en
+    // esta instalación.
+    //
+    // Sin duplicados y en orden estable. `pacman` no se queja de un paquete
+    // repetido, pero dos instalaciones con la misma elección tienen que producir
+    // el mismo archivo para poder compararlos cuando algo falla.
+    let paquetes_finales: Vec<String> = {
+        let mut todos: std::collections::BTreeSet<String> = paquetes.iter().cloned().collect();
+        todos.extend(aporte.paquetes.iter().cloned());
+        todos.into_iter().collect()
+    };
+    let servicios_finales: Vec<String> = {
+        let mut todos: std::collections::BTreeSet<String> =
+            SERVICIOS.iter().map(|s| s.to_string()).collect();
+        todos.extend(aporte.servicios.iter().cloned());
+        todos.into_iter().collect()
+    };
     let cifrado = particiones.iter().any(|p| p.cifrada);
 
     let mut disk_config = json!({
@@ -266,8 +286,8 @@ pub fn configuracion(
         // una vez es preferible.
         "network_config": { "type": "nm" },
 
-        "packages": paquetes,
-        "services": SERVICIOS,
+        "packages": paquetes_finales,
+        "services": servicios_finales,
         "custom_commands": [],
 
         // zram y no partición de intercambio. En una máquina con poca memoria
@@ -297,6 +317,10 @@ pub fn configuracion(
         "_vasakos": {
             "firmware": match firmware { Firmware::Uefi => "uefi", Firmware::Bios => "bios" },
             "sistema_archivos": plan.sistema_archivos.como_archinstall(),
+            // Queda en el archivo que se conserva en el sistema instalado: es la
+            // única forma de saber después qué se eligió al instalar sin
+            // deducirlo de la lista de paquetes.
+            "complementos": plan.complementos,
         },
     })
 }
@@ -411,6 +435,7 @@ mod tests {
             usuario: "persona".into(),
             administrador: true,
             root_habilitado: false,
+            complementos: vec!["firefox".into(), "impresoras".into()],
             secretos: Secretos {
                 usuario: "clave-del-usuario".into(),
                 root: String::new(),
@@ -427,7 +452,11 @@ mod tests {
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &["base".to_string(), "vasak-desktop".to_string()],
+            &["base".to_string(), "vasakos-desktop".to_string()],
+            &Aporte {
+                paquetes: vec!["cups".into(), "firefox".into()],
+                servicios: vec!["cups.socket".into()],
+            },
             Some("4.4.0"),
         )
     }
@@ -567,6 +596,7 @@ zsh";
             d.sector_logico,
             Firmware::Uefi,
             &[],
+            &Aporte::default(),
             None,
         );
         let esp = &c["disk_config"]["device_modifications"][0]["partitions"][0];
@@ -647,6 +677,74 @@ zsh";
         // de su propia pantalla.
         assert!(grupos.contains(&"video".to_string()));
         assert!(grupos.contains(&"audio".to_string()));
+    }
+
+    /// Los paquetes de los complementos se suman a los del escritorio.
+    #[test]
+    fn los_complementos_se_funden_en_la_lista_de_paquetes() {
+        let c = config(false);
+        let paquetes: Vec<&str> = c["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+
+        assert!(paquetes.contains(&"vasakos-desktop"), "{paquetes:?}");
+        assert!(paquetes.contains(&"firefox"), "{paquetes:?}");
+        assert!(paquetes.contains(&"cups"), "{paquetes:?}");
+
+        // Ordenados y sin repetidos: dos instalaciones con la misma elección
+        // tienen que producir el mismo archivo para poder compararlos.
+        let mut ordenados = paquetes.clone();
+        ordenados.sort_unstable();
+        assert_eq!(paquetes, ordenados, "los paquetes no salen ordenados");
+        ordenados.dedup();
+        assert_eq!(paquetes.len(), ordenados.len(), "hay paquetes repetidos");
+    }
+
+    /// Los servicios de un complemento se suman a los fijos, sin pisarlos.
+    ///
+    /// `greetd` es el único del que depende que la instalación parezca haber
+    /// funcionado: si la fusión lo reemplazara en vez de sumarse, el equipo
+    /// arrancaría a una consola de texto.
+    #[test]
+    fn los_servicios_de_los_complementos_no_pisan_los_del_sistema() {
+        let c = config(false);
+        let servicios: Vec<&str> = c["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+
+        assert!(servicios.contains(&"greetd"), "{servicios:?}");
+        assert!(servicios.contains(&"NetworkManager"), "{servicios:?}");
+        assert!(servicios.contains(&"cups.socket"), "{servicios:?}");
+    }
+
+    /// Sin complementos, la configuración es la de antes de que existieran.
+    #[test]
+    fn sin_complementos_no_se_suma_nada() {
+        let d = disco();
+        let particiones = planificar(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let mut p = plan(false);
+        p.complementos.clear();
+        let c = configuracion(
+            &p,
+            &particiones,
+            d.sector_logico,
+            Firmware::Uefi,
+            &["base".to_string()],
+            &Aporte::default(),
+            None,
+        );
+        assert_eq!(c["packages"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            c["services"].as_array().unwrap().len(),
+            SERVICIOS.len(),
+            "sin complementos los servicios son sólo los fijos"
+        );
     }
 
     #[test]

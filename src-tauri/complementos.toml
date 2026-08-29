@@ -1,0 +1,175 @@
+# Lo que se puede sumar al sistema durante la instalación.
+#
+# Un complemento es un conjunto de paquetes y servicios con un nombre que una
+# persona entiende. Lo lee `complementos.rs` en tiempo de ejecución desde
+# /usr/share/vasak-installer/complementos.toml — **no está compilado dentro del
+# binario**, así que sumar un navegador o un driver es editar este archivo, sin
+# recompilar el instalador ni rehacer la ISO.
+#
+# ## Campos
+#
+#   id           Identificador estable. Va en el plan de instalación y en las
+#                claves de traducción; cambiarlo rompe las dos cosas.
+#   categoria    `navegador` | `impresoras` | `drivers` | `extras`.
+#   paquetes     Lo que se instala. Se suman a `packages` de archinstall.
+#   servicios    Unidades de **sistema** que se habilitan. Las de usuario las
+#                habilitan sus propios paquetes; `systemctl enable` sin `--user`
+#                no las encuentra y la instalación fallaría.
+#   icono        Nombre del tema de iconos, sin el sufijo `-symbolic`.
+#   detectar     Opcional. Si está, el complemento se propone marcado cuando el
+#                hardware coincide. Ver `hardware.rs`.
+#   exclusivo    Opcional. Los de una misma categoría con `exclusivo = true` son
+#                un grupo de los que se elige uno solo (el navegador).
+#   por_defecto  Opcional. Viene marcado de entrada.
+#
+# ## Reglas
+#
+# **Nada acá está pre-marcado por conveniencia nuestra.** Lo que viene marcado
+# es lo que la enorme mayoría necesita y desmarcar es barato; lo demás va
+# apagado. Un instalador que deja diez cosas marcadas «porque total» instala un
+# sistema que nadie eligió.
+#
+# **Ningún complemento puede ser necesario para arrancar.** Lo que hace falta
+# para que el sistema encienda va en `vasakos-desktop`. Acá va lo opcional, y
+# eso es lo que permite que un fallo instalando uno no sea fatal.
+
+# ── Navegador ───────────────────────────────────────────────────────────────
+#
+# Exclusivos entre sí: se elige uno. Firefox viene marcado porque es el que trae
+# la ISO y el que la gente encuentra si no elige nada.
+
+[[complemento]]
+id = "firefox"
+categoria = "navegador"
+paquetes = ["firefox"]
+icono = "firefox"
+exclusivo = true
+por_defecto = true
+
+[[complemento]]
+id = "chromium"
+categoria = "navegador"
+paquetes = ["chromium"]
+icono = "chromium"
+exclusivo = true
+
+[[complemento]]
+id = "brave"
+categoria = "navegador"
+# Está en el repositorio de VasakOS, que ya queda configurado antes de instalar
+# los paquetes del escritorio.
+paquetes = ["brave-bin"]
+icono = "brave-browser"
+exclusivo = true
+
+[[complemento]]
+id = "sin-navegador"
+categoria = "navegador"
+paquetes = []
+icono = "application-exit"
+exclusivo = true
+
+# ── Impresoras ──────────────────────────────────────────────────────────────
+#
+# No hace falta detectar nada: es una pregunta. Una impresora de red aparece
+# recién cuando se la enchufa, y una USB puede no estar conectada al instalar.
+
+[[complemento]]
+id = "impresoras"
+categoria = "impresoras"
+paquetes = [
+    "cups",
+    "cups-pdf",
+    "cups-filters",
+    # Los controladores libres que cubren la mayoría de las impresoras.
+    "gutenprint",
+    "foomatic-db-engine",
+    "foomatic-db",
+    "foomatic-db-ppds",
+    # HP, que es la marca con más modelos que necesitan su propio controlador.
+    "hplip",
+    # Descubrimiento de impresoras de red sin configurar nada.
+    "nss-mdns",
+    "avahi",
+    # El diálogo de impresión de GTK.
+    "system-config-printer",
+]
+# `cups.socket` y no `cups.service`: activación por socket, así que el daemon
+# arranca la primera vez que algo quiere imprimir en vez de estar corriendo
+# siempre. En un equipo que imprime dos veces por mes, eso es un servicio menos
+# en cada arranque.
+servicios = ["cups.socket", "avahi-daemon"]
+icono = "printer"
+
+# ── Escaneo ─────────────────────────────────────────────────────────────────
+
+[[complemento]]
+id = "escaner"
+categoria = "impresoras"
+paquetes = ["sane", "sane-airscan", "simple-scan"]
+icono = "scanner"
+
+# ── Drivers de video ────────────────────────────────────────────────────────
+#
+# `detectar` los propone marcados cuando el hardware está. Se **proponen**, no
+# se imponen: el driver propietario de NVIDIA es una decisión con consecuencias
+# —no anda con Wayland en todas las tarjetas, y complica los kernels
+# alternativos— así que se explica y se deja elegir.
+#
+# Los controladores libres de AMD e Intel ya vienen en `vasakos-desktop` vía
+# mesa: acá sólo va lo que se suma.
+
+[[complemento]]
+id = "nvidia-propietario"
+categoria = "drivers"
+paquetes = ["nvidia-dkms", "nvidia-utils", "lib32-nvidia-utils", "nvidia-settings"]
+icono = "preferences-desktop-display"
+detectar = "gpu-nvidia"
+
+[[complemento]]
+id = "nvidia-libre"
+categoria = "drivers"
+paquetes = ["xf86-video-nouveau", "mesa"]
+icono = "preferences-desktop-display"
+detectar = "gpu-nvidia"
+
+[[complemento]]
+id = "amd-vulkan"
+categoria = "drivers"
+paquetes = ["vulkan-radeon", "lib32-vulkan-radeon", "libva-mesa-driver"]
+icono = "preferences-desktop-display"
+detectar = "gpu-amd"
+
+[[complemento]]
+id = "intel-vulkan"
+categoria = "drivers"
+paquetes = ["vulkan-intel", "lib32-vulkan-intel", "intel-media-driver"]
+icono = "preferences-desktop-display"
+detectar = "gpu-intel"
+
+[[complemento]]
+id = "broadcom-wifi"
+categoria = "drivers"
+paquetes = ["broadcom-wl-dkms"]
+icono = "network-wireless"
+detectar = "wifi-broadcom"
+
+# ── Extras ──────────────────────────────────────────────────────────────────
+
+[[complemento]]
+id = "ofimatica"
+categoria = "extras"
+paquetes = ["libreoffice-fresh", "hunspell", "hunspell-es_ar", "hunspell-en_us"]
+icono = "x-office-document"
+
+[[complemento]]
+id = "desarrollo"
+categoria = "extras"
+paquetes = ["base-devel", "git", "code"]
+icono = "builder-build"
+
+[[complemento]]
+id = "juegos"
+categoria = "extras"
+paquetes = ["steam", "lutris", "wine", "gamemode", "lib32-gamemode"]
+icono = "input-gaming"

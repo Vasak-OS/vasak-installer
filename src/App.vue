@@ -16,6 +16,7 @@ import {
 	useInstalacionStore,
 } from '@/stores/instalacion';
 import BienvenidaView from '@/views/BienvenidaView.vue';
+import ComplementosView from '@/views/ComplementosView.vue';
 import CuentaView from '@/views/CuentaView.vue';
 import DiscoView from '@/views/DiscoView.vue';
 import FinView from '@/views/FinView.vue';
@@ -35,6 +36,7 @@ const vistas = {
 	teclado: TecladoView,
 	disco: DiscoView,
 	cuenta: CuentaView,
+	complementos: ComplementosView,
 	resumen: ResumenView,
 	instalacion: InstalacionView,
 	fin: FinView,

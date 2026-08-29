@@ -2,6 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
+import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
@@ -93,6 +94,20 @@ async function autorizar() {
           <dt class="text-tx-muted">{{ t('resumen.campoTeclado') }}</dt>
           <dd class="font-mono">{{ store.eleccion.teclado }}</dd>
         </dl>
+      </SectionCard>
+
+      <SectionCard :titulo="t('pasos.complementos.titulo')">
+        <ul v-if="store.complementosElegidos.length" class="space-y-1.5">
+          <li
+            v-for="complemento in store.complementosElegidos"
+            :key="complemento.id"
+            class="flex items-center gap-2 text-sm"
+          >
+            <IconoSimbolo :nombre="complemento.icono" />
+            {{ t(`complementos.items.${complemento.id}.nombre`) }}
+          </li>
+        </ul>
+        <p v-else class="text-tx-muted text-sm">{{ t('resumen.ningunComplemento') }}</p>
       </SectionCard>
 
       <SectionCard :titulo="t('resumen.cuenta')">

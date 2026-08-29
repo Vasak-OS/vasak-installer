@@ -12,12 +12,16 @@
 //! - `layout` — qué particiones crear. Función pura, es el código cuyo error
 //!   borra datos.
 //! - `archconfig` — la única frontera con el esquema de archinstall.
-//! - `probe`, `validar`, `teclado` — lo que se puede saber y comprobar antes.
+//! - `probe`, `hardware`, `validar`, `teclado` — lo que se puede saber y
+//!   comprobar antes de tocar nada.
+//! - `complementos` — lo opcional: navegador, controladores, impresoras.
 //! - `sidecar`, `helper` — los dos lados del canal privilegiado.
 //! - `commands` — lo que llama la interfaz.
 
 pub mod archconfig;
 pub mod commands;
+pub mod complementos;
+pub mod hardware;
 pub mod helper;
 pub mod layout;
 mod locales;
@@ -53,6 +57,7 @@ pub fn run() {
             commands::sondear_sistema,
             commands::sondear_discos,
             commands::catalogos,
+            commands::complementos_disponibles,
             commands::pasos_de_instalacion,
             commands::validar_usuario,
             commands::validar_equipo,

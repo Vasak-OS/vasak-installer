@@ -25,6 +25,7 @@ export const PASOS = [
 	'teclado',
 	'disco',
 	'cuenta',
+	'complementos',
 	'resumen',
 	'instalacion',
 	'fin',
@@ -60,6 +61,30 @@ export interface Sistema {
 	nucleos: number;
 	hay_red: boolean;
 	virtualizacion: string | null;
+}
+
+export interface Complemento {
+	id: string;
+	categoria: 'navegador' | 'impresoras' | 'drivers' | 'extras';
+	paquetes: string[];
+	servicios: string[];
+	icono: string;
+	detectar: string | null;
+	exclusivo: boolean;
+	por_defecto: boolean;
+}
+
+export interface Hardware {
+	marcas: string[];
+	descripciones: string[];
+}
+
+export interface Complementos {
+	catalogo: Complemento[];
+	categorias: string[];
+	hardware: Hardware;
+	preseleccion: string[];
+	error: string | null;
 }
 
 export interface Catalogos {
@@ -135,6 +160,13 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	const discos = ref<Disco[]>([]);
 	const catalogos = ref<Catalogos>({ zonas: [], idiomas: [], teclados: [] });
 	const vistaPrevia = ref<VistaPrevia | null>(null);
+	const complementos = ref<Complementos>({
+		catalogo: [],
+		categorias: [],
+		hardware: { marcas: [], descripciones: [] },
+		preseleccion: [],
+		error: null,
+	});
 	const ayudanteListo = ref(false);
 	const errorAyudante = ref<string | null>(null);
 
@@ -155,6 +187,9 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		hostname: 'vasak',
 		administrador: true,
 		rootHabilitado: false,
+
+		/** Ids de los complementos elegidos. Ver `complementos.rs`. */
+		complementos: [] as string[],
 	});
 
 	/**
@@ -250,6 +285,10 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				}
 				return true;
 			}
+			// Siempre se puede pasar: todo lo de este paso es opcional por
+			// definición, y no elegir nada es una respuesta válida.
+			case 'complementos':
+				return true;
 			case 'resumen':
 				return ayudanteListo.value;
 			default:
@@ -274,6 +313,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 			usuario: eleccion.usuario,
 			administrador: eleccion.administrador,
 			root_habilitado: eleccion.rootHabilitado,
+			complementos: [...eleccion.complementos],
 			secretos: {
 				usuario: secretos.usuario,
 				// Cadena vacía y no `undefined` cuando no aplica: el backend
@@ -298,16 +338,27 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		// `allSettled` y no `all`: que falle uno no puede dejar la ventana vacía.
 		// Sin catálogos, los tres selectores caen a campos de texto —ya está
 		// contemplado en las vistas— y el instalador sigue siendo usable.
-		const [resSistema, resPasos, resCatalogos] = await Promise.allSettled([
+		const [resSistema, resPasos, resCatalogos, , resComplementos] = await Promise.allSettled([
 			invoke<Sistema>('sondear_sistema'),
 			invoke<string[]>('pasos_de_instalacion'),
 			invoke<Catalogos>('catalogos'),
 			recargarDiscos(),
+			// La detección de hardware son unas lecturas de `/sys` y el catálogo
+			// un TOML chico, así que entra en el mismo lote sin costarle nada al
+			// arranque — y así el paso de complementos abre con todo listo en
+			// vez de sondear al llegar.
+			invoke<Complementos>('complementos_disponibles'),
 		]);
 
 		if (resSistema.status === 'fulfilled') sistema.value = resSistema.value;
 		if (resPasos.status === 'fulfilled') pasosInstalacion.value = resPasos.value;
 		if (resCatalogos.status === 'fulfilled') catalogos.value = resCatalogos.value;
+		if (resComplementos.status === 'fulfilled') {
+			complementos.value = resComplementos.value;
+			// La preselección se aplica una sola vez, al cargar. Reaplicarla al
+			// volver al paso pisaría lo que la persona haya desmarcado.
+			eleccion.complementos = [...resComplementos.value.preseleccion];
+		}
 
 		// Predeterminados que salen del sistema, no fijos. Un instalador que
 		// abre siempre en `UTC`/`us` hace que casi todo el mundo tenga que
@@ -418,9 +469,52 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		}
 	}
 
+	/**
+	 * Marca o desmarca un complemento.
+	 *
+	 * Los exclusivos de una categoría —los navegadores— se comportan como un
+	 * grupo de uno solo: elegir uno saca al que estaba. Sin esto, dos navegadores
+	 * marcados a la vez son un estado que el grupo de opciones no puede dibujar,
+	 * y el plan instalaría los dos.
+	 */
+	function alternarComplemento(id: string) {
+		const complemento = complementos.value.catalogo.find((c) => c.id === id);
+		if (!complemento) return;
+
+		const elegidos = new Set(eleccion.complementos);
+
+		if (complemento.exclusivo) {
+			// Fuera los demás exclusivos de su misma categoría, y adentro éste.
+			for (const otro of complementos.value.catalogo) {
+				if (otro.exclusivo && otro.categoria === complemento.categoria) {
+					elegidos.delete(otro.id);
+				}
+			}
+			elegidos.add(id);
+		} else if (elegidos.has(id)) {
+			elegidos.delete(id);
+		} else {
+			elegidos.add(id);
+		}
+
+		// El orden del catálogo, no el de marcado: así el resumen enumera siempre
+		// igual y dos instalaciones con la misma elección se pueden comparar.
+		eleccion.complementos = complementos.value.catalogo
+			.filter((c) => elegidos.has(c.id))
+			.map((c) => c.id);
+	}
+
+	/** Los complementos elegidos, en objetos, para el resumen. */
+	const complementosElegidos = computed(() =>
+		complementos.value.catalogo.filter((c) => eleccion.complementos.includes(c.id))
+	);
+
 	return {
 		paso,
 		navegacionBloqueada,
+		complementos,
+		complementosElegidos,
+		alternarComplemento,
 		sistema,
 		discos,
 		catalogos,

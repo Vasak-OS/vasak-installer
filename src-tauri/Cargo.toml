@@ -61,7 +61,16 @@ tauri-plugin-vsk-journal = "2"
 # un mensaje que se entienda en vez de fallar después en el primer `mkfs`.
 libc = "0.2"
 
+# El catálogo de complementos (navegador, controladores, impresoras) es un TOML
+# que se lee en tiempo de ejecución: sumar un navegador tiene que ser editar un
+# archivo de datos, no recompilar el instalador ni rehacer la ISO.
+toml = "0.8"
+
 [dev-dependencies]
+# Árboles de `/sys` de mentira para probar la detección de hardware: no hay forma
+# de tener una NVIDIA y una AMD en la misma máquina de pruebas, y el código que
+# elige qué controlador proponer es justamente el que no puede estar sin probar.
+tempfile = "3"
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en
 # tiempo de ejecución y **paniquea** si no puede, así que un error de sintaxis no
 # se ve hasta que la aplicación no arranca.

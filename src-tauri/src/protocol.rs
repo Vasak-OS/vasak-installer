@@ -77,6 +77,19 @@ pub struct PlanInstalacion {
     /// queda bloqueada, que es lo que hace un sistema con sudo.
     pub root_habilitado: bool,
 
+    /// Los identificadores de los complementos elegidos: navegador,
+    /// controladores, impresoras, extras. Ver `complementos.rs`.
+    ///
+    /// Van como identificadores y no como listas de paquetes: el frontend no
+    /// tiene por qué saber qué instala «Impresoras», y así el catálogo se puede
+    /// editar sin que el plan que viaja por el canal cambie de forma.
+    ///
+    /// `default` para que un plan viejo —o un test— sin este campo siga
+    /// deserializando: el instalador funcionaba antes de que existieran, y la
+    /// ausencia significa «ninguno».
+    #[serde(default)]
+    pub complementos: Vec<String>,
+
     /// Contraseñas en claro. Van en la petición y **nunca** a un archivo: el
     /// ayudante las convierte en hash antes de escribir el archivo de
     /// credenciales que lee archinstall.
