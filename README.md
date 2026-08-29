@@ -155,10 +155,17 @@ por comodidad nuestra.
 `/usr/share/vasak-installer/paquetes.txt`, así que sumar un paquete al escritorio
 no obliga a recompilar el instalador ni a rehacer la ISO.
 
-⚠️ **Son dos fuentes de verdad.** Ese archivo y `archiso/packages.x86_64` se
-mantienen a mano en sincronía y van a divergir. La solución de fondo es un
-metapaquete `vasakos-desktop` cuyas `depends` sean el escritorio: la ISO y este
-archivo lo nombrarían a él y nada más.
+Y es **una sola línea**: el escritorio entero es el metapaquete
+`vasakos-desktop`, que se arma en `PKGBUILDS/vasakos-desktop/` y arrastra por
+dependencia los 255 paquetes que forman VasakOS. `paquetes.txt` lo nombra a él
+y agrega el kernel; `archiso/packages.x86_64` lo nombra a él y agrega lo que
+sólo tiene sentido en el medio live. Sumar un paquete al escritorio es editarle
+las `depends` al metapaquete: ninguna de las dos listas se toca.
+
+Antes cada lista estaba escrita entera, en dos repositorios distintos y
+sincronizadas a mano. Divergían, y de la peor manera: sumar un paquete y
+olvidarse de la otra lista daba una ISO en la que la función andaba y un sistema
+instalado en el que no, diferencia que sólo aparece después de instalar.
 
 ### El repositorio de VasakOS va en la configuración de archinstall
 
@@ -244,8 +251,6 @@ Verificá que un test sirve reintroduciendo el bug a propósito y viendo que fal
 - **Usar particiones existentes** en vez de borrar el disco entero. La estructura
   ya lo contempla (`EsquemaDisco` tiene una sola variante y `wipe` está en una
   sola clave), pero no hay interfaz.
-- **El metapaquete `vasakos-desktop`**, para que `paquetes.txt` y la ISO dejen de
-  ser dos listas.
 - **Progreso fino durante `pacstrap`**, que es el paso largo. Hoy la barra se
   mueve por etapas; el conteo `(12/1543)` de pacman está en el registro y se
   podría parsear.
