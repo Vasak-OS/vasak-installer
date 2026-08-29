@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import Icono from '@/components/ui/Icono.vue';
 import { ICONO_HECHO } from '@/tools/iconos';
 
 interface Props {
@@ -41,7 +41,7 @@ defineEmits<{ click: [] }>();
       "
       aria-hidden="true"
     >
-      <IconoSimbolo :nombre="icono" clase="size-5" />
+      <Icono :nombre="icono" clase="size-5" />
 
       <!--
         La marca de terminado es un emblema encima del icono del paso, no un
@@ -56,7 +56,7 @@ defineEmits<{ click: [] }>();
         v-if="estado === 'hecho'"
         class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full bg-status-success"
       >
-        <IconoSimbolo :nombre="ICONO_HECHO" clase="size-3" />
+        <Icono :nombre="ICONO_HECHO" clase="size-3" />
       </span>
     </span>
 

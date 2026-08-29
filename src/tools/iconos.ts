@@ -52,24 +52,28 @@ export const ICONO_FALLADO = 'dialog-error';
 /**
  * El icono de un disco.
  *
- * Se distingue lo que se puede distinguir de verdad con lo que informa `lsblk`:
- * NVMe, disco mecánico y el resto. **No** se dibuja un icono de USB adivinando
- * por la ruta: `lsblk` no informa el transporte en el sondeo, y marcar como
- * extraíble un disco interno —o al revés— en la pantalla donde se elige qué
- * formatear es la clase de error que nadie perdona.
+ * Se nombra el icono **semánticamente correcto** aunque hoy el tema dibuje lo
+ * mismo para varios: `drive-harddisk-solidstate` es un enlace a
+ * `drive-harddisk`, así que un SSD y un disco mecánico se ven idénticos. Nombrar
+ * el correcto no cuesta nada y el día que el tema los distinga, funciona solo.
+ *
+ * Lo que **no** se hace es forzar una diferencia visual con un icono de otra
+ * cosa. Un NVMe con `media-flash` mostraba una tarjeta SD —ese nombre es un
+ * enlace a `gnome-dev-media-sdmmc`— y un SSD con `drive-multidisk` mostraba una
+ * pila de discos de RAID. En la pantalla donde se elige qué disco formatear, un
+ * icono que miente sobre qué dispositivo es resulta peor que uno repetido: la
+ * diferencia entre NVMe, SSD y mecánico ya está escrita al lado, en texto.
+ *
+ * Tampoco se dibuja un icono de USB adivinando por la ruta: `lsblk` no informa
+ * el transporte en el sondeo, y marcar como extraíble un disco interno —o al
+ * revés— es la clase de error que nadie perdona acá.
  */
 export function iconoDeDisco(disco: { nvme: boolean; rotacional: boolean }): string {
-	if (disco.nvme) return 'media-flash';
 	if (disco.rotacional) return 'drive-harddisk';
-	return 'drive-multidisk';
+	// Un NVMe es un disco de estado sólido; el tema no tiene un icono propio para
+	// NVMe y `drive-harddisk-nvme` no existe.
+	return 'drive-harddisk-solidstate';
 }
-
-/** El sistema de archivos de la raíz. */
-export const ICONO_SISTEMA_ARCHIVOS: Record<string, string> = {
-	btrfs: 'drive-multidisk',
-	ext4: 'drive-harddisk',
-	xfs: 'media-flash',
-};
 
 /** El rol de una partición en la vista previa del particionado. */
 export const ICONO_ROL_PARTICION: Record<string, string> = {
@@ -86,10 +90,17 @@ export const ICONO_MENSAJE = {
 	exito: 'object-select',
 } as const;
 
-/** Las filas del resumen del equipo, en la bienvenida. */
+/**
+ * Las filas del resumen del equipo, en la bienvenida.
+ *
+ * `am-memory` y no `media-flash` para la memoria: `media-flash` es una tarjeta
+ * SD —en este tema, un enlace a `gnome-dev-media-sdmmc`— y la memoria RAM no es
+ * una tarjeta de cámara. Es el mismo error que tenía el icono del disco NVMe.
+ * `am-*` es el juego que usa vasak-monitor para estas mismas magnitudes.
+ */
 export const ICONO_EQUIPO = {
-	procesador: 'computer-chip',
-	memoria: 'media-flash',
+	procesador: 'am-cpu',
+	memoria: 'am-memory',
 	firmware: 'preferences-system-details',
 	virtualizacion: 'computer',
 } as const;
@@ -99,7 +110,6 @@ export function todosLosIconos(): string[] {
 	return [
 		...Object.values(ICONO_PASO),
 		...Object.values(ICONO_PASO_INSTALACION),
-		...Object.values(ICONO_SISTEMA_ARCHIVOS),
 		...Object.values(ICONO_ROL_PARTICION),
 		...Object.values(ICONO_MENSAJE),
 		...Object.values(ICONO_EQUIPO),

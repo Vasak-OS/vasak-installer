@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import Icono from '@/components/ui/Icono.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
@@ -80,7 +80,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
             :key="descripcion"
             class="flex items-center gap-2 text-sm"
           >
-            <IconoSimbolo nombre="computer-chip" />
+            <Icono nombre="computer-chip" />
             {{ descripcion }}
           </li>
         </ul>
@@ -122,15 +122,16 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
               :model-value="estaElegido(complemento.id)"
               :label="t(`complementos.items.${complemento.id}.nombre`)"
               :descripcion="t(`complementos.items.${complemento.id}.descripcion`)"
+              :icono="complemento.icono"
               @update:model-value="store.alternarComplemento(complemento.id)"
-            />
-            <p
-              v-if="loPropusoElHardware(complemento)"
-              class="ml-14 flex items-center gap-1.5 text-status-success text-xs"
             >
-              <IconoSimbolo nombre="object-select" clase="size-3" />
-              {{ t('complementos.propuestoPorHardware') }}
-            </p>
+              <template v-if="loPropusoElHardware(complemento)" #pie>
+                <span class="mt-1 flex items-center gap-1.5 text-status-success text-xs">
+                  <Icono nombre="object-select" clase="size-3" />
+                  {{ t('complementos.propuestoPorHardware') }}
+                </span>
+              </template>
+            </SwitchToggle>
           </div>
         </div>
       </SectionCard>

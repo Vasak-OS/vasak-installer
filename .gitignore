@@ -24,3 +24,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Los tests del plugin de archinstall se corren con `python3 -m unittest`, que
+# deja los `.pyc` compilados al lado del fuente. No son fuente ni viajan en el
+# paquete.
+__pycache__/
+*.py[cod]

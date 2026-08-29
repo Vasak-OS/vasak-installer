@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import Icono from '@/components/ui/Icono.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
@@ -10,12 +10,10 @@ import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import TextInput from '@/components/ui/TextInput.vue';
 import { type Disco, type SistemaArchivos, useInstalacionStore } from '@/stores/instalacion';
 import { formatearBytes } from '@/tools/formato';
-import {
-	ICONO_PASO,
-	ICONO_ROL_PARTICION,
-	ICONO_SISTEMA_ARCHIVOS,
-	iconoDeDisco,
-} from '@/tools/iconos';
+// Los sistemas de archivos van sin icono a propósito: el tema dibuja igual todo
+// lo que se les podría poner, y tres opciones excluyentes con el mismo icono no
+// informan nada — sólo repiten. Lo que las distingue es el texto de al lado.
+import { ICONO_PASO, ICONO_ROL_PARTICION, iconoDeDisco } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
 
 const { t, locale } = useI18n();
@@ -98,7 +96,7 @@ onMounted(async () => {
           >
             <div class="flex items-center gap-3">
               <span
-                class="flex size-10 shrink-0 items-center justify-center rounded-corner border"
+                class="flex size-11 shrink-0 items-center justify-center rounded-corner border"
                 :class="
                   store.eleccion.disco === disco.ruta
                     ? 'border-secondary bg-primary/20'
@@ -106,7 +104,7 @@ onMounted(async () => {
                 "
                 aria-hidden="true"
               >
-                <IconoSimbolo :nombre="iconoDeDisco(disco)" clase="size-6" />
+                <Icono :nombre="iconoDeDisco(disco)" tipo="icono" clase="size-7" />
               </span>
               <span class="min-w-0 flex-1 truncate font-medium text-sm">{{ disco.modelo }}</span>
               <span class="shrink-0 font-mono text-sm">{{ tamano(disco.tamano_bytes) }}</span>
@@ -174,7 +172,6 @@ onMounted(async () => {
             :seleccionada="store.eleccion.sistemaArchivos === fs.valor"
             :label="t(fs.nombre)"
             :descripcion="t(fs.ayuda)"
-            :icono="ICONO_SISTEMA_ARCHIVOS[fs.valor]"
             @elegir="store.eleccion.sistemaArchivos = fs.valor"
           />
         </div>
@@ -233,7 +230,7 @@ onMounted(async () => {
           >
             <div class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 font-medium">
-                <IconoSimbolo :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
+                <Icono :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
                 {{
                   particion.rol === 'esp'
                     ? t('disco.rolEsp')

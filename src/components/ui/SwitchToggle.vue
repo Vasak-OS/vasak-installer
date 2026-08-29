@@ -1,11 +1,16 @@
 <script setup lang="ts">
+import Icono from '@/components/ui/Icono.vue';
+
 interface Props {
 	modelValue: boolean;
 	label: string;
 	descripcion?: string;
+	/** Opcional: los interruptores de una opción sin identidad propia no llevan. */
+	icono?: string;
+	tipoIcono?: 'icono' | 'simbolo';
 	disabled?: boolean;
 }
-const props = withDefaults(defineProps<Props>(), { disabled: false });
+const props = withDefaults(defineProps<Props>(), { disabled: false, tipoIcono: 'icono' });
 const emit = defineEmits<{ 'update:modelValue': [valor: boolean] }>();
 </script>
 
@@ -33,9 +38,27 @@ const emit = defineEmits<{ 'update:modelValue': [valor: boolean] }>();
         :class="modelValue ? 'translate-x-4' : 'translate-x-0'"
       />
     </span>
+    <span
+      v-if="icono"
+      class="flex size-10 shrink-0 items-center justify-center rounded-corner border"
+      :class="modelValue ? 'border-secondary bg-primary/20' : 'border-ui-border bg-ui-surface/40'"
+      aria-hidden="true"
+    >
+      <Icono :nombre="icono" :tipo="tipoIcono" clase="size-6" />
+    </span>
+
     <span class="min-w-0 flex-1">
       <span class="block font-medium text-sm">{{ label }}</span>
       <span v-if="descripcion" class="mt-0.5 block text-tx-muted text-xs">{{ descripcion }}</span>
+      <!--
+        Lo que quiera decirse debajo del texto va en la misma columna que el
+        texto. Antes esto se ponía afuera con un margen a mano calculado sobre la
+        estructura interna de este componente —interruptor, hueco, icono, hueco—
+        y quedaba veinte píxeles a la izquierda. Un margen que tiene que seguir
+        la disposición de otro componente se desincroniza en cuanto ese
+        componente cambia, y nadie se entera.
+      -->
+      <slot name="pie" />
     </span>
   </button>
 </template>
