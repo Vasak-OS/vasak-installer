@@ -31,7 +31,14 @@ const REPO_NOMBRE: &str = "vasakos";
 /// Va acá y no en `paquetes.txt` porque no es un dato editable: si el repo se
 /// muda, el instalador viejo tiene que seguir sabiendo bajar `vasakos-mirrorlist`,
 /// que es el paquete que después toma el relevo con la lista real de espejos.
-const REPO_URL: &str = "https://repo.vasak.net.ar/$repo/os/$arch";
+///
+/// **El orden de los componentes no es el de Arch.** Arch usa
+/// `$repo/os/$arch`; el repositorio de VasakOS sirve `repo/$arch/$repo`, que es
+/// lo que dice `vasakos-mirrorlist` y lo que publica `repository-script`. Con el
+/// orden de Arch, `pacstrap` recibe un 404 en cada paquete `vasak-*` y la
+/// instalación muere en el paso del escritorio — **después** de haber formateado
+/// el disco. Hay un test que compara esta cadena con la del paquete de espejos.
+const REPO_URL: &str = "https://repo.vasak.net.ar/repo/$arch/$repo";
 
 /// Servicios que se habilitan en el sistema instalado.
 ///
@@ -508,6 +515,26 @@ zsh";
         // Sin el repo, `pacstrap` no encuentra ningún `vasak-*` y la
         // instalación muere **después** de formatear el disco.
         assert!(repos[0]["url"].as_str().unwrap().contains("$repo"));
+    }
+
+    /// La URL tiene el orden de componentes de VasakOS y no el de Arch.
+    ///
+    /// Arch sirve `$repo/os/$arch`; VasakOS sirve `repo/$arch/$repo`. Escribir
+    /// el de Arch —que es el que uno recuerda— produce un 404 en cada paquete
+    /// `vasak-*`, y eso se descubre a los veinte minutos de instalación, con el
+    /// disco ya formateado. El test fija el orden exacto.
+    #[test]
+    fn la_url_del_repositorio_tiene_el_orden_de_vasakos() {
+        assert_eq!(REPO_URL, "https://repo.vasak.net.ar/repo/$arch/$repo");
+        // El error concreto que se cometió: la convención de Arch.
+        assert!(
+            !REPO_URL.contains("/os/"),
+            "«/os/» es la convención de Arch, no la de VasakOS"
+        );
+        // `$arch` va antes que `$repo`.
+        let arch = REPO_URL.find("$arch").expect("falta $arch");
+        let repo = REPO_URL.rfind("$repo").expect("falta $repo");
+        assert!(arch < repo, "$arch tiene que ir antes que $repo: {REPO_URL}");
     }
 
     #[test]

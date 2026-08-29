@@ -207,8 +207,21 @@ pub struct Progreso {
 /// exactamente a esta lista. Agregar un paso es agregarlo en los tres lugares:
 /// acá, en el plugin y en los catálogos de idioma —hay un test que verifica lo
 /// último.
+/// **`camelCase` y no `snake_case`.** Es lo que hace que la representación de
+/// serde coincida con `clave()`, que es lo que emite el plugin de Python y lo
+/// que espera el frontend.
+///
+/// Con `snake_case`, `SistemaBase` serializaba como `sistema_base` mientras el
+/// plugin escribía `sistemaBase`: el ayudante no podía deserializar sus eventos
+/// y los descartaba como «evento ilegible del plugin». Se perdían justo los del
+/// paso más largo —el `pacstrap` del sistema base—, así que la barra se quedaba
+/// quieta durante la mayor parte de la instalación. El resto de las variantes
+/// son de una sola palabra y se ven iguales en los dos estilos, que es lo que
+/// hizo que pasara desapercibido.
+///
+/// El test `la_representacion_de_serde_es_la_clave` los ata para siempre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum Paso {
     /// Escribir la tabla de particiones y formatear.
     Particionar,
@@ -309,6 +322,50 @@ mod tests {
         let vuelta: Peticion = serde_json::from_str(&json).unwrap();
         assert_eq!(vuelta.id, 7);
         assert!(matches!(vuelta.cuerpo, CuerpoPeticion::SondearDiscos));
+    }
+
+    /// La representación de serde tiene que ser **exactamente** `clave()`.
+    ///
+    /// Son dos caminos hacia el mismo nombre: `clave()` lo usan el frontend y
+    /// los catálogos de idioma; serde lo usa el ayudante para leer los eventos
+    /// del plugin de Python, que escribe esos mismos nombres. Si se separan, los
+    /// eventos de ese paso se descartan en silencio como «evento ilegible» y la
+    /// barra se queda quieta sin que nada falle.
+    ///
+    /// Ya pasó: con `rename_all = "snake_case"`, `SistemaBase` era
+    /// `sistema_base` para serde y `sistemaBase` para todo lo demás.
+    #[test]
+    fn la_representacion_de_serde_es_la_clave() {
+        for paso in Paso::TODOS {
+            let serializado = serde_json::to_string(paso).unwrap();
+            let esperado = format!("\"{}\"", paso.clave());
+            assert_eq!(
+                serializado, esperado,
+                "{paso:?}: serde escribe {serializado} y clave() dice {esperado}"
+            );
+
+            // Y a la inversa: lo que escribe el plugin tiene que volver a
+            // parsear. Es el camino que de verdad se recorre en producción.
+            let vuelta: Paso = serde_json::from_str(&esperado).unwrap();
+            assert_eq!(vuelta, *paso);
+        }
+    }
+
+    /// El mensaje completo que emite el plugin para el paso que estaba roto.
+    ///
+    /// Se prueba la línea entera y no sólo el enum, porque lo que falla en
+    /// producción es el `from_str::<Mensaje>` del seguidor de eventos.
+    #[test]
+    fn el_evento_del_plugin_para_el_sistema_base_se_parsea() {
+        let linea = r#"{"type":"progress","paso":"sistemaBase","estado":"en_curso","fraccion":null,"detalle":null}"#;
+        let mensaje: Mensaje = serde_json::from_str(linea).expect("el plugin emite esto");
+        match mensaje {
+            Mensaje::Progress(p) => {
+                assert_eq!(p.paso, Paso::SistemaBase);
+                assert_eq!(p.estado, EstadoPaso::EnCurso);
+            }
+            otro => panic!("se parseó como {otro:?}"),
+        }
     }
 
     /// Cada paso tiene que estar en `TODOS` exactamente una vez: la interfaz

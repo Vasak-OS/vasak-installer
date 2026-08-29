@@ -185,6 +185,95 @@ fn sin_acento(c: char) -> char {
     }
 }
 
+// ── Región, idioma y teclado ────────────────────────────────────────────────
+//
+// Se pueden escribir a mano cuando el sistema no pudo dar los catálogos, así
+// que hay que comprobarlos contra el sistema antes de instalar. Un valor
+// inválido no falla al principio: falla dentro del chroot, cuando `localectl` o
+// `loadkeys` lo rechazan, con el disco ya formateado.
+
+/// Que la zona horaria exista en la base de datos de zonas.
+///
+/// Se comprueba que el archivo esté, y **que esté adentro** de
+/// `/usr/share/zoneinfo`: el nombre viene del frontend, y un `../../etc/shadow`
+/// se resolvería a un archivo que existe. archinstall lo usa para armar un
+/// enlace a `/etc/localtime`.
+pub fn zona_horaria(zona: &str) -> Result<(), String> {
+    if zona.is_empty() {
+        return Err("está vacía".into());
+    }
+    // Ni rutas absolutas ni tramos que suban: la zona es un nombre relativo
+    // dentro de la base de datos, siempre.
+    if zona.starts_with('/') || zona.split('/').any(|t| t == "." || t == "..") {
+        return Err(format!("«{zona}» no es un nombre de zona"));
+    }
+
+    let base = std::path::Path::new("/usr/share/zoneinfo");
+    if !base.is_dir() {
+        // Sin base de datos no se puede comprobar nada, y rechazar todo dejaría
+        // el instalador sin poder instalar. Se acepta lo que se pueda.
+        return Ok(());
+    }
+    if base.join(zona).is_file() {
+        Ok(())
+    } else {
+        Err(format!("«{zona}» no está en la base de zonas horarias"))
+    }
+}
+
+/// Que el idioma esté entre los que soporta glibc.
+///
+/// Se compara sin la codificación, que es como lo maneja el resto del
+/// instalador: `SUPPORTED` trae `es_AR.UTF-8 UTF-8` y acá se espera `es_AR`.
+pub fn idioma(local: &str) -> Result<(), String> {
+    if local.is_empty() {
+        return Err("está vacío".into());
+    }
+    // El formato de glibc: `xx_YY`, con variantes como `ca_ES@valencia`. Nada de
+    // espacios ni de barras, que es lo que se colaría de un campo libre.
+    if local
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '@' || c == '-'))
+    {
+        return Err(format!("«{local}» tiene caracteres que no van en un local"));
+    }
+
+    let Ok(contenido) = std::fs::read_to_string("/usr/share/i18n/SUPPORTED") else {
+        return Ok(()); // sin catálogo no se puede comprobar
+    };
+    let existe = contenido.lines().any(|linea| {
+        linea
+            .split_whitespace()
+            .next()
+            .is_some_and(|l| l.trim_end_matches(".UTF-8") == local)
+    });
+    if existe {
+        Ok(())
+    } else {
+        Err(format!("«{local}» no está entre los idiomas del sistema"))
+    }
+}
+
+/// Que el mapa de teclado exista entre los de consola.
+pub fn teclado(nombre: &str) -> Result<(), String> {
+    if nombre.is_empty() {
+        return Err("está vacío".into());
+    }
+    if nombre.contains('/') || nombre.contains("..") {
+        return Err(format!("«{nombre}» no es un nombre de mapa de teclado"));
+    }
+
+    let mapas = crate::probe::teclados();
+    if mapas.is_empty() {
+        return Ok(()); // sin `kbd` instalado no se puede comprobar
+    }
+    if mapas.iter().any(|m| m == nombre) {
+        Ok(())
+    } else {
+        Err(format!("«{nombre}» no está entre los mapas de teclado del sistema"))
+    }
+}
+
 /// Fuerza de una contraseña, para mostrarla — **no para bloquear**.
 ///
 /// No se bloquea por la misma razón que no lo hacía la configuración de
@@ -376,6 +465,64 @@ mod tests {
                 "«{entrada}» sugirió «{sugerido}»"
             );
         }
+    }
+
+    #[test]
+    fn la_zona_horaria_se_comprueba_contra_la_base_del_sistema() {
+        assert_eq!(zona_horaria("America/Argentina/Buenos_Aires"), Ok(()));
+        assert_eq!(zona_horaria("Europe/Madrid"), Ok(()));
+        assert!(zona_horaria("America/No_Existe").is_err());
+        assert!(zona_horaria("").is_err());
+    }
+
+    /// Una zona con `..` no puede resolver fuera de la base de datos.
+    ///
+    /// El nombre viene de un campo de texto libre —el que aparece cuando el
+    /// sistema no pudo dar la lista— y termina en un enlace a `/etc/localtime`.
+    #[test]
+    fn una_zona_con_rutas_relativas_se_rechaza() {
+        for malo in [
+            "../../etc/shadow",
+            "/etc/shadow",
+            "America/../../../etc/passwd",
+            "./America/Bogota",
+        ] {
+            assert!(zona_horaria(malo).is_err(), "dejó pasar «{malo}»");
+        }
+    }
+
+    #[test]
+    fn el_idioma_se_comprueba_contra_los_del_sistema() {
+        // Si glibc no está, la comprobación se saltea y todo pasa; el test se
+        // adapta en vez de fallar en una máquina sin catálogo.
+        if std::fs::read_to_string("/usr/share/i18n/SUPPORTED").is_err() {
+            return;
+        }
+        assert_eq!(idioma("es_AR"), Ok(()));
+        assert_eq!(idioma("en_US"), Ok(()));
+        assert!(idioma("xx_YY").is_err());
+        assert!(idioma("").is_err());
+        // Con la codificación pegada no valida: el resto del instalador maneja
+        // el local sin ella, y `es_AR.UTF-8` en `sys_lang` duplica la línea en
+        // `locale.gen`.
+        assert!(idioma("es_AR.UTF-8").is_err());
+    }
+
+    #[test]
+    fn un_idioma_con_espacios_o_barras_se_rechaza() {
+        assert!(idioma("es AR").is_err());
+        assert!(idioma("../es_AR").is_err());
+    }
+
+    #[test]
+    fn el_teclado_se_comprueba_contra_los_del_sistema() {
+        if crate::probe::teclados().is_empty() {
+            return; // sin `kbd` instalado
+        }
+        assert_eq!(teclado("us"), Ok(()));
+        assert!(teclado("no-existe-este-mapa").is_err());
+        assert!(teclado("").is_err());
+        assert!(teclado("../../etc/shadow").is_err());
     }
 
     #[test]

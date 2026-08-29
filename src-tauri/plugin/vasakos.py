@@ -194,21 +194,30 @@ def on_install(installation=None, *_args, **_kwargs):
         fallar(VASAKOS, "no se pudo determinar el destino de la instalación")
         return
 
+    # `critico` dice si un fallo de ese ajuste invalida la instalación entera.
+    # Sólo la limpieza lo es: los otros dos dejan un sistema que arranca y
+    # funciona, apenas con el teclado equivocado o sin poder actualizarse.
     ajustes = (
-        ("teclado del escritorio", _configurar_teclado_xkb),
-        ("limpieza del medio live", _limpiar_rastros_del_live),
-        ("espejos de VasakOS", _asegurar_mirrorlist),
+        ("teclado del escritorio", _configurar_teclado_xkb, False),
+        ("limpieza del medio live", _limpiar_rastros_del_live, True),
+        ("espejos de VasakOS", _asegurar_mirrorlist, False),
     )
-    for indice, (nombre, funcion) in enumerate(ajustes):
+    for indice, (nombre, funcion, critico) in enumerate(ajustes):
         progreso(VASAKOS, "en_curso", indice / len(ajustes), nombre)
         try:
             funcion(destino)
             registrar(f"listo: {nombre}")
         except Exception as error:  # noqa: BLE001
-            # Ninguno de estos ajustes es imprescindible para que el sistema
-            # arranque, así que un fallo se anota y se sigue con el siguiente.
-            # Abortar acá dejaría un sistema instalado y funcional marcado como
-            # fallido, que es peor información que un aviso.
+            if critico:
+                # Se propaga: archinstall aborta y el ayudante informa la
+                # instalación como fallida. Es la única forma de que alguien se
+                # entere — un aviso en un registro plegado no lo lee nadie, y lo
+                # que quedó abierto es acceso de root sin contraseña.
+                fallar(VASAKOS, error)
+                raise
+            # Los demás dejan un sistema que arranca y funciona: se anota y se
+            # sigue. Abortar por ellos marcaría como fallida una instalación
+            # perfectamente usable, que es peor información que un aviso.
             registrar(f"no se pudo aplicar «{nombre}»: {error}", "warn")
 
     terminar(VASAKOS)
@@ -258,7 +267,15 @@ def _ajustar_usuario(installation, user):
         registrar("el nombre completo tiene caracteres que no van en /etc/passwd", "warn")
         return
 
-    installation.arch_chroot(f"chfn -f {_entrecomillar(nombre_completo)} {usuario}")
+    # Los dos entrecomillados, no sólo el nombre completo. Hoy `commands.rs`
+    # revalida el usuario contra `[a-z0-9_-]` antes de llegar acá, así que no hay
+    # forma de que un metacarácter pase — pero el valor también puede venir de
+    # `os.environ` o de `user.username`, que este archivo no valida, y la
+    # seguridad de esta línea no tiene por qué depender de una comprobación que
+    # vive en otro proceso.
+    installation.arch_chroot(
+        f"chfn -f {_entrecomillar(nombre_completo)} {_entrecomillar(usuario)}"
+    )
 
 
 def _configurar_teclado_xkb(destino):
@@ -311,16 +328,17 @@ def _configurar_teclado_xkb(destino):
 # Sale de la lista que aplicaba `shellprocess-final.conf` de calamares, revisada:
 # las entradas de sddm y plymouth de ahí ya no aplican —VasakOS usa greetd con
 # vasak-session-manager— y estaban borrando archivos que no existen.
-RASTROS_DEL_LIVE = [
+# Los que **tienen que** desaparecer. Si alguno queda, el sistema instalado le da
+# privilegios de root a cualquiera con una sesión abierta, sin pedir contraseña.
+#
+# Un fallo acá aborta la instalación en vez de anotarse como aviso: entregar un
+# sistema diciendo «listo» cuando cualquiera del grupo `wheel` es root sin
+# escribir nada es peor que entregar un fallo con su motivo. Un aviso en un
+# registro que nadie lee no es una advertencia.
+RASTROS_CRITICOS = [
     # sudo sin contraseña para el grupo wheel. En el medio live es lo que permite
     # instalar sin pedir nada; en el sistema instalado es una puerta abierta.
     "etc/sudoers.d/g_wheel",
-    # Autologin de la consola y la inicialización de las claves de pacman: los
-    # dos son andamiaje del arranque de la ISO.
-    "etc/systemd/system/getty@tty1.service.d",
-    "etc/systemd/system/multi-user.target.wants/pacman-init.service",
-    "etc/systemd/system/pacman-init.service",
-    "etc/systemd/system/etc-pacman.d-gnupg.mount",
     # Polkit sin autenticación, del mismo modo que el sudoers.
     "etc/polkit-1/rules.d/49-nopasswd_global.rules",
     # La regla que deja al instalador tomar root sin preguntar. En el medio live
@@ -328,41 +346,76 @@ RASTROS_DEL_LIVE = [
     # usuario live no tiene una—; heredarla en el sistema instalado dejaría a
     # cualquiera del grupo wheel abrir un proceso root sin autenticarse.
     "etc/polkit-1/rules.d/49-vasak-installer.rules",
+    # La configuración de greetd de la ISO: hace **autologin** del usuario
+    # `vasak` sin contraseña. Heredada, el equipo instalado abre sesión solo.
+    "etc/greetd/config.toml",
+]
+
+# Andamiaje del arranque de la ISO. Que quede alguno ensucia, no abre nada, así
+# que un fallo se anota y la instalación sigue.
+RASTROS_COSMETICOS = [
+    # Autologin de la consola y la inicialización de las claves de pacman.
+    "etc/systemd/system/getty@tty1.service.d",
+    "etc/systemd/system/multi-user.target.wants/pacman-init.service",
+    "etc/systemd/system/pacman-init.service",
+    "etc/systemd/system/etc-pacman.d-gnupg.mount",
     # Los scripts que arrancan la sesión live.
     "root/.automated_script.sh",
     "root/.zlogin",
     "root/.xinitrc",
-    # La configuración de greetd de la ISO, que hace autologin del usuario
-    # `vasak`. El paquete greetd trae la suya, y ésta la pisaba.
-    "etc/greetd/config.toml",
 ]
+
+
+def _quitar(destino, relativo):
+    """Borra una ruta del sistema instalado. Devuelve si quedó efectivamente sin ella."""
+    ruta = destino / relativo
+    # `is_symlink` primero: un enlace roto no es `exists()` pero sí hay que
+    # borrarlo, y sin esta comprobación los enlaces de
+    # `multi-user.target.wants` quedaban.
+    if not ruta.exists() and not ruta.is_symlink():
+        return True
+    try:
+        if ruta.is_dir() and not ruta.is_symlink():
+            shutil.rmtree(ruta)
+        else:
+            ruta.unlink()
+    except OSError as error:
+        registrar(f"no se pudo quitar /{relativo}: {error}", "error")
+        return False
+
+    registrar(f"quitado del sistema instalado: /{relativo}")
+    # Se comprueba que de verdad no esté. `rmtree` puede vaciar un directorio y
+    # dejarlo, y un `unlink` sobre un montaje puede no fallar y no borrar nada:
+    # afirmar que se quitó sin mirar es exactamente lo que no se puede hacer con
+    # un archivo que da root.
+    return not ruta.exists() and not ruta.is_symlink()
+
+
+class RastroCriticoPersistente(Exception):
+    """Quedó en el sistema instalado un archivo que da privilegios sin autenticar."""
 
 
 def _limpiar_rastros_del_live(destino):
     """Saca del sistema instalado lo que sólo tenía sentido en la ISO.
 
-    El más importante es `etc/sudoers.d/g_wheel`: en el medio live le da sudo sin
-    contraseña al usuario live, y heredarlo significa que cualquiera con una
-    sesión abierta es root sin escribir nada.
+    Los de `RASTROS_CRITICOS` no son opcionales: `etc/sudoers.d/g_wheel` le da
+    sudo sin contraseña a todo el grupo `wheel`, y las reglas de polkit hacen lo
+    mismo por su lado. Si alguno sobrevive, **la instalación se marca como
+    fallida**, porque un sistema que se entrega diciendo «listo» y en el que
+    cualquiera es root sin escribir nada es peor que uno que falló y lo dice.
     """
-    for relativo in RASTROS_DEL_LIVE:
-        ruta = destino / relativo
-        # `is_symlink` primero: un enlace roto no es `exists()` pero sí hay que
-        # borrarlo, y sin esta comprobación los enlaces de
-        # `multi-user.target.wants` quedaban.
-        if not ruta.exists() and not ruta.is_symlink():
-            continue
-        try:
-            if ruta.is_dir() and not ruta.is_symlink():
-                shutil.rmtree(ruta)
-            else:
-                ruta.unlink()
-            registrar(f"quitado del sistema instalado: /{relativo}")
-        except OSError as error:
-            # Que uno no se pueda borrar no invalida los demás, y el que importa
-            # de verdad —el sudoers— se reporta con su nombre en el registro.
-            nivel = "error" if "sudoers" in relativo else "warn"
-            registrar(f"no se pudo quitar /{relativo}: {error}", nivel)
+    quedaron = [r for r in RASTROS_CRITICOS if not _quitar(destino, r)]
+
+    # Los cosméticos se intentan igual aunque haya fallado un crítico: si al
+    # final se aborta, cuanto menos quede del medio live, mejor.
+    for relativo in RASTROS_COSMETICOS:
+        _quitar(destino, relativo)
+
+    if quedaron:
+        raise RastroCriticoPersistente(
+            "quedaron en el sistema instalado archivos que dan privilegios sin "
+            "autenticación: " + ", ".join(f"/{r}" for r in quedaron)
+        )
 
 
 def _asegurar_mirrorlist(destino):
@@ -382,16 +435,42 @@ def _asegurar_mirrorlist(destino):
     if re.search(r"^\s*\[vasakos\]", contenido, re.MULTILINE):
         return
 
+    # El `Include` sólo se escribe si el archivo al que apunta existe.
+    #
+    # `pacman` **aborta** cuando un `Include` apunta a un archivo que no está: no
+    # es que ignore ese repositorio, es que no corre en absoluto. Y esta rama se
+    # ejecuta justamente cuando algo salió distinto de lo previsto, que es la
+    # misma situación en la que `vasakos-mirrorlist` puede no haberse instalado.
+    #
+    # Sin repositorio de VasakOS, el sistema no puede actualizar sus aplicaciones
+    # —recuperable, se arregla agregando la sección a mano—. Con un `pacman.conf`
+    # roto no se puede instalar nada, ni siquiera lo que haría falta para
+    # arreglarlo.
+    mirrorlist = destino / "etc" / "pacman.d" / "vasakos-mirrorlist"
+    if not mirrorlist.is_file():
+        registrar(
+            "archinstall no escribió el repositorio [vasakos] y falta "
+            "/etc/pacman.d/vasakos-mirrorlist: no se agrega la sección, porque un "
+            "Include a un archivo inexistente hace abortar a pacman entero",
+            "error",
+        )
+        return
+
     registrar(
         "archinstall no escribió el repositorio [vasakos] en pacman.conf; "
         "el instalador lo agrega",
         "warn",
     )
     with open(pacman_conf, "a", encoding="utf-8") as archivo:
+        # `Required TrustAll` y no `Required DatabaseOptional`: tiene que coincidir
+        # con lo que pone la configuración principal (`sign_check: "Required"` y
+        # `sign_option: "TrustAll"` en `archconfig.rs`). Con `DatabaseOptional`,
+        # este respaldo rechazaría la misma clave de `vasakos-keyring` que el
+        # camino normal acepta, y los paquetes no se podrían verificar.
         archivo.write(
             "\n# Agregado por el instalador de VasakOS.\n"
             "[vasakos]\n"
-            "SigLevel = Required DatabaseOptional\n"
+            "SigLevel = Required TrustAll\n"
             "Include = /etc/pacman.d/vasakos-mirrorlist\n"
         )
 

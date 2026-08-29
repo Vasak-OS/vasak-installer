@@ -114,6 +114,12 @@ impl Ayudante {
         {
             let pendientes = Arc::clone(&pendientes);
             std::thread::spawn(move || {
+                // Si llegó un `Done`, el ayudante cierra porque terminó, no
+                // porque se cayó. Sin esta marca, **toda instalación exitosa**
+                // emitía además el evento de caída, y la interfaz tenía que
+                // adivinar por su cuenta que no era un fallo — con guardas que
+                // dependen del orden en que Tauri entrega los eventos.
+                let mut termino_bien = false;
                 let lector = BufReader::new(stdout);
                 for linea in lector.lines() {
                     let Ok(linea) = linea else { break };
@@ -121,7 +127,12 @@ impl Ayudante {
                         continue;
                     }
                     match serde_json::from_str::<Mensaje>(&linea) {
-                        Ok(mensaje) => repartir(&app, &pendientes, mensaje),
+                        Ok(mensaje) => {
+                            if matches!(mensaje, Mensaje::Done { .. }) {
+                                termino_bien = true;
+                            }
+                            repartir(&app, &pendientes, mensaje);
+                        }
                         // pkexec escribe sus propios mensajes por esta misma
                         // salida cuando la autorización falla, y no son JSON.
                         // Se muestran como registro en vez de descartarse: son
@@ -146,7 +157,13 @@ impl Ayudante {
                 for (_, tx) in guard.drain() {
                     let _ = tx.send(Resultado::fallido("el ayudante privilegiado se cerró"));
                 }
-                let _ = app.emit(EVENTO_CAIDO, ());
+
+                // La caída se avisa **sólo si no hubo `Done`**: el ayudante sale
+                // por su cuenta apenas termina la instalación, y ese cierre es
+                // parte del funcionamiento normal.
+                if !termino_bien {
+                    let _ = app.emit(EVENTO_CAIDO, ());
+                }
             });
         }
 
@@ -178,14 +195,24 @@ impl Ayudante {
         let peticion = Peticion { id, cuerpo };
         let texto = serde_json::to_string(&peticion).map_err(|e| e.to_string())?;
 
-        {
-            let mut entrada = self
-                .entrada
-                .lock()
-                .map_err(|_| "el canal con el ayudante está roto".to_string())?;
-            writeln!(entrada, "{texto}")
-                .and_then(|_| entrada.flush())
-                .map_err(|e| format!("no se pudo escribirle al ayudante: {e}"))?;
+        // Si la escritura falla, la respuesta no va a llegar nunca: la entrada
+        // pendiente se saca antes de devolver el error. Sin esto quedaba en el
+        // mapa hasta que el ayudante cerrara, y cada petición fallida dejaba la
+        // suya — un goteo que además hace que el aviso de «llegó tarde la
+        // respuesta N» aparezca por ids que ya nadie espera.
+        let escritura = {
+            let mut entrada = match self.entrada.lock() {
+                Ok(e) => e,
+                Err(_) => {
+                    self.olvidar(id);
+                    return Err("el canal con el ayudante está roto".into());
+                }
+            };
+            writeln!(entrada, "{texto}").and_then(|_| entrada.flush())
+        };
+        if let Err(e) = escritura {
+            self.olvidar(id);
+            return Err(format!("no se pudo escribirle al ayudante: {e}"));
         }
 
         match rx.recv_timeout(ESPERA_RESPUESTA) {

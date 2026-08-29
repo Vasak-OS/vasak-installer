@@ -16,7 +16,7 @@ tenía la ISO el día que se armó.
 
 Son **dos procesos**, y ésa es la decisión de la que cuelga todo lo demás.
 
-```
+```text
 ┌──────────────────────────┐        NDJSON        ┌──────────────────────────┐
 │ vasak-installer          │  ←───────────────→   │ vasak-installer-helper   │
 │ (usuario de la sesión)   │   stdin / stdout     │ (root, vía pkexec)       │

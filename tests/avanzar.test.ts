@@ -92,6 +92,19 @@ describe('paso del disco', () => {
 		expect(store.puedeAvanzar('disco')).toBe(false);
 	});
 
+	test('un disco demasiado chico no habilita el paso', () => {
+		const store = almacenCompleto();
+		// 16 GiB: el más grande de los que no están en uso, así que queda
+		// preseleccionado. Antes el botón quedaba habilitado y el rechazo llegaba
+		// recién al apretar Instalar, cuando el backend lo rechaza por tamaño.
+		store.discos = [{ ...discoDe('/dev/sda'), tamano_bytes: 16 * 1024 ** 3 }];
+		expect(store.puedeAvanzar('disco')).toBe(false);
+
+		// Justo en el mínimo sí.
+		store.discos = [{ ...discoDe('/dev/sda'), tamano_bytes: 20 * 1024 ** 3 }];
+		expect(store.puedeAvanzar('disco')).toBe(true);
+	});
+
 	test('un disco que ya no está en la lista no habilita el paso', () => {
 		const store = almacenCompleto();
 		// Alguien desconectó el disco externo que había elegido.

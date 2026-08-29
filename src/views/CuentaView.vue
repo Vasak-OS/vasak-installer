@@ -56,28 +56,46 @@ function textoDeError(motivo: Motivo, campo: 'usuario' | 'equipo'): string {
  * TypeScript garantizaría que las dos copias se separen; llamar es una ida y
  * vuelta por IPC que no se nota al tipear.
  */
+/**
+ * Contadores de las validaciones en vuelo.
+ *
+ * Se dispara una por tecla, y no hay garantía de que contesten en orden.
+ * Escribiendo `pat` y borrando hasta `p`, la respuesta de `pat` puede llegar
+ * después de la de `p` y dejar el campo marcado con un error que corresponde a
+ * un texto que ya no está: la persona ve un error rojo sobre lo que acaba de
+ * escribir bien, y no hay forma de sacárselo de encima más que seguir tipeando.
+ */
+let usuarioEnVuelo = 0;
+let equipoEnVuelo = 0;
+
 async function validarUsuario() {
+	const mia = ++usuarioEnVuelo;
 	if (!store.eleccion.usuario) {
 		errorUsuario.value = null;
 		return;
 	}
 	try {
 		await invoke('validar_usuario', { nombre: store.eleccion.usuario });
+		if (mia !== usuarioEnVuelo) return;
 		errorUsuario.value = null;
 	} catch (error) {
+		if (mia !== usuarioEnVuelo) return;
 		errorUsuario.value = error as Motivo;
 	}
 }
 
 async function validarEquipo() {
+	const mia = ++equipoEnVuelo;
 	if (!store.eleccion.hostname) {
 		errorEquipo.value = null;
 		return;
 	}
 	try {
 		await invoke('validar_equipo', { nombre: store.eleccion.hostname });
+		if (mia !== equipoEnVuelo) return;
 		errorEquipo.value = null;
 	} catch (error) {
+		if (mia !== equipoEnVuelo) return;
 		errorEquipo.value = error as Motivo;
 	}
 }
@@ -93,11 +111,17 @@ watch(() => store.eleccion.hostname, validarEquipo, { immediate: true });
  * completo pisaba lo que ya se había escrito a mano.
  */
 const usuarioTocado = ref(false);
+let sugerenciaEnVuelo = 0;
 watch(
 	() => store.eleccion.nombreCompleto,
 	async (nombre) => {
 		if (usuarioTocado.value) return;
-		store.eleccion.usuario = await invoke<string>('sugerir_usuario', { nombreCompleto: nombre });
+		const mia = ++sugerenciaEnVuelo;
+		const sugerido = await invoke<string>('sugerir_usuario', { nombreCompleto: nombre });
+		// Misma carrera que las validaciones: una sugerencia vieja que llega
+		// tarde pisaría el campo con la de un nombre que ya se cambió.
+		if (mia !== sugerenciaEnVuelo || usuarioTocado.value) return;
+		store.eleccion.usuario = sugerido;
 	}
 );
 

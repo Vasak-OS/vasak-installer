@@ -243,13 +243,27 @@ pub fn run() -> ! {
 /// manejador. El disco queda a medias en los dos casos, y la interfaz lo dice
 /// con esas palabras.
 fn cancelar(salida: &Salida, grupo: &GrupoProcesos, cancelado: &Arc<AtomicBool>) {
+    // La marca se levanta **siempre**, incluso sin nada corriendo todavía.
+    //
+    // Entre que la interfaz pide instalar y que `archinstall` arranca hay unos
+    // segundos —se sondea el disco, se planifica, se hashean las contraseñas, se
+    // escriben los archivos— y el botón de cancelar está a la vista todo ese
+    // rato. Descartando la petición porque el grupo todavía es cero, apretar
+    // cancelar en esa ventana no hacía nada y la instalación seguía: el peor
+    // momento posible para que un botón mienta, porque es justo cuando todavía
+    // no se tocó el disco. `instalar` mira esta marca antes de lanzar nada.
+    cancelado.store(true, Ordering::SeqCst);
+
     let pgid = grupo.load(Ordering::SeqCst);
     if pgid <= 0 {
-        log(salida, Nivel::Warn, "no hay nada que cancelar");
+        log(
+            salida,
+            Nivel::Warn,
+            "cancelación pedida antes de arrancar archinstall; no se va a lanzar",
+        );
         return;
     }
 
-    cancelado.store(true, Ordering::SeqCst);
     log(salida, Nivel::Warn, "cancelando la instalación");
     // SEGURIDAD: `kill` recibe dos enteros y no toca memoria. El PID negativo es
     // la forma documentada de señalar a un grupo entero.
@@ -535,6 +549,13 @@ fn instalar(
         // Ver `cancelar`.
         .process_group(0);
 
+    // Último control antes del punto sin retorno: si se pidió cancelar mientras
+    // se preparaba todo lo de arriba, no se lanza nada. Hasta acá no se tocó el
+    // disco, así que cancelar todavía significa que no pasó nada.
+    if cancelado.load(Ordering::SeqCst) {
+        return Err("la instalación se canceló".to_string());
+    }
+
     let mut proceso = comando
         .spawn()
         .map_err(|e| format!("no se pudo ejecutar archinstall: {e}. ¿Está instalado?"))?;
@@ -544,7 +565,18 @@ fn instalar(
 
     // El PID del hijo es también el identificador de su grupo, porque
     // `process_group(0)` lo pone como líder de un grupo nuevo.
-    grupo.store(proceso.id() as i32, Ordering::SeqCst);
+    let pgid = proceso.id() as i32;
+    grupo.store(pgid, Ordering::SeqCst);
+
+    // Y una vez más después de publicarlo: una cancelación que llegó entre el
+    // control de arriba y este `store` habría encontrado el grupo en cero y no
+    // habría matado nada, dejando corriendo justo lo que se pidió detener.
+    if cancelado.load(Ordering::SeqCst) {
+        // SEGURIDAD: dos enteros, sin punteros. El PID negativo señala al grupo.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
 
     // Tres hilos leyendo tres flujos: la salida de archinstall, su error, y el
     // archivo de eventos del plugin. Los dos primeros van al registro; el
@@ -842,17 +874,43 @@ mod tests {
     /// Con el grupo en cero, un `kill(-0, SIGKILL)` señalaría **al grupo del
     /// propio ayudante**, que es como decir «matate vos y todo lo que te
     /// rodea». La guarda del cero es lo único que separa las dos cosas.
+    /// Cancelar antes de que arranque archinstall **queda anotado**.
+    ///
+    /// Entre que se pide instalar y que archinstall arranca hay unos segundos
+    /// —sondeo, planificación, hasheo de contraseñas, escritura de archivos— y
+    /// el botón está a la vista todo ese rato. Antes se descartaba la petición
+    /// porque el grupo todavía era cero: apretar cancelar ahí no hacía nada y la
+    /// instalación seguía, que es el peor momento para que el botón mienta
+    /// porque todavía no se tocó el disco.
     #[test]
-    fn cancelar_sin_nada_corriendo_no_hace_nada() {
+    fn una_cancelacion_temprana_no_se_pierde() {
         let grupo: GrupoProcesos = Arc::new(AtomicI32::new(0));
         let cancelado = Arc::new(AtomicBool::new(false));
         let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
 
         cancelar(&salida, &grupo, &cancelado);
 
-        // Y no se marca como cancelada: si se marcara, un fallo posterior de
-        // archinstall se informaría como «la cancelaste vos».
-        assert!(!cancelado.load(Ordering::SeqCst));
+        assert!(
+            cancelado.load(Ordering::SeqCst),
+            "la cancelación se descartó por no haber nada corriendo todavía"
+        );
+    }
+
+    #[test]
+    fn cancelar_sin_nada_corriendo_no_hace_nada() {
+        let grupo: GrupoProcesos = Arc::new(AtomicI32::new(0));
+        let cancelado = Arc::new(AtomicBool::new(false));
+        let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
+
+        // Lo que se comprueba es que **no se manda ninguna señal**: con el
+        // grupo en cero, `kill(-0, SIGKILL)` señalaría al grupo del propio
+        // ayudante, que es como decir «matate vos y todo lo que te rodea». La
+        // guarda del cero es lo único que separa las dos cosas — si faltara,
+        // este test se llevaría puesto al proceso que lo corre.
+        cancelar(&salida, &grupo, &cancelado);
+
+        // Sigue vivo, que es todo lo que hay que demostrar.
+        assert_eq!(grupo.load(Ordering::SeqCst), 0);
     }
 
     #[test]

@@ -108,6 +108,17 @@ export interface LineaRegistro {
  */
 const MAX_REGISTRO = 500;
 
+/**
+ * El disco más chico en el que se puede instalar, en GiB.
+ *
+ * Duplica `MINIMO_GIB` de `layout.rs` a propósito: el backend es el que decide y
+ * rechaza, y esto es para poder decirlo **antes** de que alguien llegue al
+ * resumen. Si se separan, lo peor que pasa es que el botón quede habilitado y el
+ * backend lo rechace con su motivo, que es lo que pasaba antes de existir esta
+ * comprobación.
+ */
+const MINIMO_GIB = 20;
+
 export const useInstalacionStore = defineStore('instalacion', () => {
 	// ── Dónde estamos ──────────────────────────────────────────────────────
 	const paso = ref<Paso>('bienvenida');
@@ -223,6 +234,11 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				return Boolean(eleccion.teclado);
 			case 'disco': {
 				if (!discoElegido.value || discoElegido.value.en_uso) return false;
+				// El disco preseleccionado es el más grande **de los que no están
+				// en uso**, y eso no garantiza que entre el escritorio: en una
+				// máquina con un solo disco de 16 GiB quedaba elegido, el botón
+				// habilitado, y el rechazo llegaba recién al apretar Instalar.
+				if (discoElegido.value.tamano_bytes < MINIMO_GIB * 1024 ** 3) return false;
 				if (!eleccion.cifrar) return true;
 				return secretos.cifrado.length > 0 && secretos.cifrado === secretos.cifradoRepetida;
 			}
@@ -368,18 +384,33 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		}
 	}
 
+	/**
+	 * Contador de la vista previa en vuelo.
+	 *
+	 * Cambiar de sistema de archivos dos veces seguidas dispara dos consultas, y
+	 * no hay ninguna garantía de que contesten en orden: la primera puede llegar
+	 * última y dejar el resumen mostrando los subvolúmenes de btrfs para una
+	 * instalación en ext4. Es la pantalla que alguien mira antes de aceptar el
+	 * punto sin retorno, así que no puede mostrar una respuesta vieja.
+	 */
+	let vistaPreviaEnVuelo = 0;
+
 	async function calcularVistaPrevia() {
+		const mia = ++vistaPreviaEnVuelo;
 		if (!eleccion.disco) {
 			vistaPrevia.value = null;
 			return;
 		}
 		try {
-			vistaPrevia.value = await invoke<VistaPrevia>('vista_previa_particionado', {
+			const resultado = await invoke<VistaPrevia>('vista_previa_particionado', {
 				disco: eleccion.disco,
 				sistemaArchivos: eleccion.sistemaArchivos,
 				cifrar: eleccion.cifrar,
 			});
+			if (mia !== vistaPreviaEnVuelo) return;
+			vistaPrevia.value = resultado;
 		} catch {
+			if (mia !== vistaPreviaEnVuelo) return;
 			// Un disco que no se puede planificar —demasiado chico, en uso— no
 			// es un error de la aplicación: la tarjeta del disco ya lo dice, y
 			// el resumen simplemente no muestra el detalle.

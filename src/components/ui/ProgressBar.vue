@@ -23,10 +23,18 @@ defineProps<Props>();
     />
     <!--
       Sin fracción conocida, una banda que se desliza. La animación es infinita,
-      así que `prefers-reduced-motion` la detiene desde main.css — sin eso, una
-      barra que se mueve sin parar durante media hora es exactamente lo que
-      marea a alguien con trastorno vestibular.
+      así que `prefers-reduced-motion` la detiene desde main.css — una barra que
+      se mueve sin parar durante media hora es exactamente lo que marea a alguien
+      con trastorno vestibular.
+      ·
+      Pero detenerla dejaba una banda quieta ocupando un tercio del ancho, que se
+      lee como «33% completado»: quien pidió menos movimiento terminaba viendo un
+      progreso inventado. Con `motion-reduce` la banda pasa a ocupar el ancho
+      completo y atenuada, que no se confunde con ninguna fracción.
     -->
-    <div v-else class="h-full w-1/3 animate-[indefinida_1.4s_ease-in-out_infinite] rounded-full bg-primary" />
+    <div
+      v-else
+      class="h-full w-1/3 animate-[indefinida_1.4s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:w-full motion-reduce:animate-none motion-reduce:bg-primary/40"
+    />
   </div>
 </template>
