@@ -6,7 +6,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import type { Store } from 'pinia';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
-import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import Icono from '@/components/ui/Icono.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -176,7 +176,7 @@ onUnmounted(() => {
       aparecía en ningún otro lado.
     -->
     <template #identidad>
-      <IconoSimbolo nombre="system-software-install" clase="size-5" />
+      <Icono nombre="system-software-install" tipo="icono" clase="size-5" />
     </template>
     <template #titulo>
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>

@@ -1,5 +1,24 @@
 /**
- * Símbolos del tema de iconos, con caché compartida entre componentes.
+ * Iconos del tema del sistema, con caché compartida entre componentes.
+ *
+ * El tema tiene **dos versiones de casi todo**: la de color, en `scalable/`, que
+ * es el icono que el escritorio muestra en todas partes; y la simbólica, un
+ * glifo monocromo pensado para barras y listas densas. El plugin las resuelve
+ * con dos llamadas distintas, y elegir mal es lo que hace que Firefox aparezca
+ * como un contorno gris en vez del logo de Firefox.
+ *
+ * La regla del instalador:
+ *
+ * - **`icono`** donde el icono **es** la cosa: los navegadores, los discos, la
+ *   impresora, la placa de video. Ahí se reconoce por su forma y su color, y un
+ *   glifo monocromo lo vuelve irreconocible.
+ * - **`simbolo`** donde el icono es una marca de estado o de navegación: los
+ *   pasos de la barra lateral, el tilde de terminado, el aviso de un mensaje.
+ *   Ahí lo que importa es que se lea a 16 píxeles y que siga al color del texto.
+ *
+ * ⚠️ Pedir `icono` para un nombre que sólo existe en simbólico **no falla**: el
+ * plugin devuelve `image-missing`, o sea el icono de imagen rota. Por eso hay un
+ * test que verifica que cada nombre pedido a color tenga su versión a color.
  *
  * `useReactiveIcon` del template resuelve un icono por instancia de componente.
  * Alcanza cuando hay tres o cuatro; acá hay cerca de cuarenta —nueve pasos en la
@@ -18,10 +37,19 @@
  */
 
 import { listen } from '@tauri-apps/api/event';
-import { getSymbolSource } from '@vasakgroup/plugin-vicons';
+import { getIconSource, getSymbolSource } from '@vasakgroup/plugin-vicons';
 import { onUnmounted, type Ref, ref, watch } from 'vue';
 
-/** Nombre del símbolo → la promesa de su fuente `data:`. */
+/** Cuál de las dos versiones del tema se pide. */
+export type TipoIcono = 'icono' | 'simbolo';
+
+/**
+ * `tipo:nombre` → la promesa de su fuente `data:`.
+ *
+ * El tipo va en la clave: `firefox` a color y `firefox` simbólico son dos
+ * archivos distintos, y con la clave sin el tipo el segundo que pidiera se
+ * llevaba el del primero.
+ */
 const cache = new Map<string, Promise<string>>();
 
 /**
@@ -51,30 +79,35 @@ function armarOyente() {
 	});
 }
 
-function resolver(nombre: string): Promise<string> {
-	const enCache = cache.get(nombre);
+function resolver(nombre: string, tipo: TipoIcono): Promise<string> {
+	const clave = `${tipo}:${nombre}`;
+	const enCache = cache.get(clave);
 	if (enCache) return enCache;
 
-	const promesa = getSymbolSource(nombre).catch((error) => {
-		console.error(`no se pudo resolver el símbolo «${nombre}»`, error);
-		// La entrada fallida se saca de la caché: un error de red o un tema a
-		// medio instalar no puede dejar ese icono roto para siempre.
-		cache.delete(nombre);
+	const traer = tipo === 'icono' ? getIconSource : getSymbolSource;
+	const promesa = traer(nombre).catch((error) => {
+		console.error(`no se pudo resolver «${nombre}» (${tipo})`, error);
+		// La entrada fallida se saca de la caché: un tema a medio instalar no
+		// puede dejar ese icono roto para siempre.
+		cache.delete(clave);
 		return '';
 	});
 
-	cache.set(nombre, promesa);
+	cache.set(clave, promesa);
 	return promesa;
 }
 
 /**
- * La fuente `data:` de un símbolo, reactiva al nombre y al tema.
+ * La fuente `data:` de un icono, reactiva al nombre, al tipo y al tema.
  *
  * Devuelve cadena vacía mientras resuelve y si falla; quien lo use tiene que
  * poder dibujarse sin icono, que es lo que evita el salto de disposición cuando
  * el tema no tiene ese nombre.
  */
-export function useSimbolo(nombre: () => string): Ref<string> {
+export function useIcono(
+	nombre: () => string,
+	tipo: () => TipoIcono = () => 'simbolo'
+): Ref<string> {
 	armarOyente();
 	const fuente = ref('');
 	// Contador para descartar respuestas viejas: si el nombre cambia dos veces
@@ -84,14 +117,14 @@ export function useSimbolo(nombre: () => string): Ref<string> {
 	let vivo = true;
 
 	watch(
-		[nombre, version],
-		async ([actual]) => {
+		[nombre, tipo, version],
+		async ([actual, tipoActual]) => {
 			if (!actual) {
 				fuente.value = '';
 				return;
 			}
 			const mio = ++token;
-			const resuelto = await resolver(actual);
+			const resuelto = await resolver(actual, tipoActual);
 			if (vivo && mio === token) fuente.value = resuelto;
 		},
 		{ immediate: true }

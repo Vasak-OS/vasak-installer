@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSimbolo from '@/components/ui/IconoSimbolo.vue';
+import Icono from '@/components/ui/Icono.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { PASOS, useInstalacionStore } from '@/stores/instalacion';
@@ -31,7 +31,7 @@ const pocaMemoria = computed(
     <SectionCard :titulo="t('bienvenida.equipo')">
       <dl v-if="store.sistema" class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
         <dt class="flex items-center gap-2 text-tx-muted">
-          <IconoSimbolo :nombre="ICONO_EQUIPO.procesador" />
+          <Icono :nombre="ICONO_EQUIPO.procesador" />
           {{ t('bienvenida.procesador') }}
         </dt>
         <dd>
@@ -42,13 +42,13 @@ const pocaMemoria = computed(
         </dd>
 
         <dt class="flex items-center gap-2 text-tx-muted">
-          <IconoSimbolo :nombre="ICONO_EQUIPO.memoria" />
+          <Icono :nombre="ICONO_EQUIPO.memoria" />
           {{ t('bienvenida.memoria') }}
         </dt>
         <dd>{{ memoria }}</dd>
 
         <dt class="flex items-center gap-2 text-tx-muted">
-          <IconoSimbolo :nombre="ICONO_EQUIPO.firmware" />
+          <Icono :nombre="ICONO_EQUIPO.firmware" />
           {{ t('bienvenida.firmware') }}
         </dt>
         <dd>
@@ -57,7 +57,7 @@ const pocaMemoria = computed(
 
         <template v-if="store.sistema.virtualizacion">
           <dt class="flex items-center gap-2 text-tx-muted">
-          <IconoSimbolo :nombre="ICONO_EQUIPO.virtualizacion" />
+          <Icono :nombre="ICONO_EQUIPO.virtualizacion" />
           {{ t('bienvenida.virtualizacion') }}
         </dt>
           <dd class="font-mono text-xs">{{ store.sistema.virtualizacion }}</dd>

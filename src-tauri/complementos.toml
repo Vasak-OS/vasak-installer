@@ -15,7 +15,13 @@
 #   servicios    Unidades de **sistema** que se habilitan. Las de usuario las
 #                habilitan sus propios paquetes; `systemctl enable` sin `--user`
 #                no las encuentra y la instalación fallaría.
-#   icono        Nombre del tema de iconos, sin el sufijo `-symbolic`.
+#   icono        Nombre del tema de iconos. **Tiene que existir en su versión a
+#                color** (`scalable/`, no `symbolic/`): los complementos se
+#                dibujan con el icono de verdad, porque un navegador se reconoce
+#                por su logo y en glifo monocromo Firefox, Chromium y Brave son
+#                tres contornos idénticos. Pedir a color un nombre que sólo
+#                existe en simbólico **no falla**: devuelve `image-missing`, el
+#                icono de imagen rota. Hay un test que lo verifica.
 #   detectar     Opcional. Si está, el complemento se propone marcado cuando el
 #                hardware coincide. Ver `hardware.rs`.
 #   exclusivo    Opcional. Los de una misma categoría con `exclusivo = true` son
@@ -66,7 +72,7 @@ exclusivo = true
 id = "sin-navegador"
 categoria = "navegador"
 paquetes = []
-icono = "application-exit"
+icono = "action-unavailable"
 exclusivo = true
 
 # ── Impresoras ──────────────────────────────────────────────────────────────
@@ -160,16 +166,16 @@ detectar = "wifi-broadcom"
 id = "ofimatica"
 categoria = "extras"
 paquetes = ["libreoffice-fresh", "hunspell", "hunspell-es_ar", "hunspell-en_us"]
-icono = "x-office-document"
+icono = "applications-office"
 
 [[complemento]]
 id = "desarrollo"
 categoria = "extras"
 paquetes = ["base-devel", "git", "code"]
-icono = "builder-build"
+icono = "applications-development"
 
 [[complemento]]
 id = "juegos"
 categoria = "extras"
 paquetes = ["steam", "lutris", "wine", "gamemode", "lib32-gamemode"]
-icono = "input-gaming"
+icono = "applications-games"

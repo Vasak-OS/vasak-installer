@@ -15,7 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ICONO_PASO, todosLosIconos } from '../src/tools/iconos';
+import { ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
 import { PASOS } from '../src/stores/instalacion';
 
 /**
@@ -124,17 +124,74 @@ describe('los iconos que nombra el instalador', () => {
 	 * nuestro con una forma conocida, y traer un parser al frontend sólo para
 	 * este test sería una dependencia por un `grep`.
 	 */
-	test('los iconos del catálogo de complementos existen', () => {
+	test('los iconos del catálogo de complementos existen **a color**', () => {
 		if (!hayTema) return;
 
 		const toml = readFileSync('src-tauri/complementos.toml', 'utf8');
 		const iconos = [...toml.matchAll(/^icono\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
-
 		expect(iconos.length).toBeGreaterThan(5);
-		const faltantes = iconos.filter(
-			(nombre) => !disponibles.has(`${nombre}-symbolic`) && !disponibles.has(nombre)
+
+		// Se exige el nombre **sin** el sufijo simbólico: los complementos se
+		// dibujan con `tipo="icono"`, que pide la versión a color.
+		//
+		// Y esto no es un detalle estético. Pedir a color un nombre que sólo
+		// existe en simbólico **no falla**: el plugin no encuentra el archivo y
+		// devuelve `image-missing`, o sea que al lado de «Desarrollo» aparece el
+		// icono de imagen rota. La interfaz sigue funcionando y sólo se ve
+		// mirando la pantalla.
+		const sinVersionAColor = iconos.filter((nombre) => !disponibles.has(nombre));
+		expect(sinVersionAColor).toEqual([]);
+	});
+
+	/**
+	 * Los navegadores tienen que dibujarse con su logo de verdad.
+	 *
+	 * Es el caso que motivó separar los dos tipos: en glifo monocromo Firefox,
+	 * Chromium y Brave son tres contornos que nadie distingue, y elegir navegador
+	 * mirando tres contornos iguales no es elegir.
+	 */
+	test('los navegadores tienen su icono de aplicación', () => {
+		if (!hayTema) return;
+		for (const nombre of ['firefox', 'chromium', 'brave-browser']) {
+			expect(disponibles.has(nombre)).toBe(true);
+		}
+	});
+
+	/**
+	 * Los que se dibujan como símbolo tienen que existir como símbolo.
+	 *
+	 * Al revés que el caso de arriba: un nombre que sólo existe a color, pedido
+	 * como símbolo, también cae en `image-missing`.
+	 */
+	test('los iconos de los pasos existen en versión simbólica', () => {
+		if (!hayTema) return;
+		const sinSimbolo = Object.values(ICONO_PASO).filter(
+			(nombre) => !disponibles.has(`${nombre}-symbolic`)
 		);
-		expect(faltantes).toEqual([]);
+		expect(sinSimbolo).toEqual([]);
+	});
+
+	/**
+	 * Ningún icono de disco puede ser el de otro dispositivo.
+	 *
+	 * Es el error que hubo: el NVMe se dibujaba con `media-flash`, que en este
+	 * tema es un enlace a `gnome-dev-media-sdmmc` —una tarjeta SD—, y el SSD con
+	 * `drive-multidisk`, una pila de discos de RAID. En la pantalla donde se
+	 * elige qué disco formatear, un icono que miente sobre qué dispositivo es
+	 * resulta peor que uno repetido.
+	 */
+	test('los discos se dibujan con un icono de disco', () => {
+		const usados = [
+			iconoDeDisco({ nvme: true, rotacional: false }),
+			iconoDeDisco({ nvme: false, rotacional: true }),
+			iconoDeDisco({ nvme: false, rotacional: false }),
+		];
+		for (const nombre of usados) {
+			expect(nombre.startsWith('drive-harddisk')).toBe(true);
+		}
+		// Y los nombres que engañaban no pueden volver.
+		expect(usados).not.toContain('media-flash');
+		expect(usados).not.toContain('drive-multidisk');
 	});
 
 	test('ningún nombre lleva extensión ni ruta', () => {
