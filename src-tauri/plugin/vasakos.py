@@ -451,16 +451,22 @@ def _usuarios_de(destino):
     return {linea.split(":", 1)[0] for linea in texto.splitlines() if ":" in linea}
 
 
-def _autologin_de(config):
-    """La cuenta a la que greetd le abre sesión sin pedir nada, si hay alguna.
+def _leer_greetd(config):
+    """Qué dice la configuración de greetd: si se entiende, y a quién le abre sola.
 
-    `None` cuando no hay `[initial_session]`, que es lo que corresponde en un
-    sistema instalado: ahí la sesión se abre después de escribir la contraseña.
+    Devuelve `(legible, autologin)`.
+
+    Las dos cosas hacen falta por separado y por motivos distintos. `autologin`
+    es la cuenta que entra sin escribir contraseña, y `None` ahí es lo que
+    corresponde en un sistema instalado. `legible` es si greetd va a poder
+    cargar el archivo: uno que no parsea deja el equipo sin pantalla de login
+    igual que si faltara, y eso no se puede confundir con «está bien y no tiene
+    autologin», que es lo mismo que devolvería mirando sólo la primera mitad.
     """
     try:
         texto = config.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
+        return False, None
 
     try:
         inicial = tomllib.loads(texto).get("initial_session")
@@ -473,14 +479,19 @@ def _autologin_de(config):
             r"^\[initial_session\](.*?)(?=^\[|\Z)", texto, re.MULTILINE | re.DOTALL
         )
         if seccion is None:
-            return None
+            return False, None
         usuario = re.search(r'^\s*user\s*=\s*"([^"]*)"', seccion.group(1), re.MULTILINE)
-        return usuario.group(1) if usuario else None
+        return False, (usuario.group(1) if usuario else None)
 
     if not isinstance(inicial, dict):
-        return None
+        return True, None
     usuario = inicial.get("user")
-    return usuario if isinstance(usuario, str) and usuario else None
+    return True, (usuario if isinstance(usuario, str) and usuario else None)
+
+
+def _autologin_de(config):
+    """La cuenta a la que greetd le abre sesión sin pedir nada, o `None`."""
+    return _leer_greetd(config)[1]
 
 
 def _asegurar_greetd(destino):
@@ -515,7 +526,27 @@ def _asegurar_greetd(destino):
         registrar("greetd no tenía configuración: se puso la de vasak-session-manager")
         return
 
-    usuario = _autologin_de(config)
+    legible, usuario = _leer_greetd(config)
+
+    if not legible:
+        # Un archivo que greetd no puede cargar deja el equipo sin pantalla de
+        # login, lo mismo que si faltara, así que se trata igual. Si hay
+        # referencia se pone y no queda nada más que mirar; si no la hay, se
+        # sigue: puede que la sección de autologin se haya encontrado a mano, y
+        # sacarla importa más que dejar el archivo prolijo.
+        if referencia.exists():
+            shutil.copyfile(referencia, config)
+            registrar(
+                "la configuración de greetd no se entiende: se puso la de "
+                "vasak-session-manager"
+            )
+            return
+        registrar(
+            "la configuración de greetd no se entiende y no hay referencia que "
+            "poner en su lugar",
+            "warn",
+        )
+
     if usuario is None:
         return
 
@@ -543,7 +574,7 @@ def _asegurar_greetd(destino):
             "warn",
         )
 
-    quedo = _autologin_de(config) if config.exists() else None
+    quedo = _leer_greetd(config)[1] if config.exists() else None
     if quedo is not None:
         raise AutologinHeredado(
             f"el sistema instalado sigue abriendo sesión sola con «{quedo}», una "

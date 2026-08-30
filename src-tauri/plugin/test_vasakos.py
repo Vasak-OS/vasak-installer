@@ -230,6 +230,39 @@ user = "greeter"
 
         self.assertIsNone(vasakos._autologin_de(self.config))
 
+    def test_un_toml_roto_sin_autologin_igual_se_reemplaza(self):
+        # No tiene autologin, así que no hay nada que sacar por seguridad, pero
+        # greetd tampoco lo puede cargar: el equipo arranca sin pantalla de
+        # login. Mirando sólo el autologin, este caso es indistinguible de una
+        # configuración sana, y era el agujero.
+        self._escribir(self.config, "[terminal\nvt = ")
+        self._escribir(self.referencia, self.REFERENCIA)
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertEqual(self.config.read_text(), self.REFERENCIA)
+
+    def test_un_toml_roto_sin_referencia_avisa_y_no_aborta(self):
+        # Sin referencia no hay con qué arreglarlo. Se avisa y la instalación
+        # sigue: el equipo queda con un greeter que no levanta, que se arregla
+        # desde una consola, y descartar una instalación entera y completa por
+        # eso es peor que entregarla.
+        self._escribir(self.config, "[terminal\nvt = ")
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)  # no levanta
+
+        self.assertTrue(self.config.exists())
+
+    def test_legible_distingue_el_toml_roto_de_uno_sano_sin_autologin(self):
+        roto = self._escribir(self.raiz / "roto.toml", "[terminal\nvt = ")
+        sano = self._escribir(self.raiz / "sano.toml", self.REFERENCIA)
+
+        # Los dos no tienen autologin; sólo uno se puede cargar.
+        self.assertEqual(vasakos._leer_greetd(roto), (False, None))
+        self.assertEqual(vasakos._leer_greetd(sano), (True, None))
+
     # ── Lo que no hay que tocar ─────────────────────────────────────────────
     def test_un_autologin_a_una_cuenta_que_existe_se_respeta(self):
         self._escribir(self.config, self.AUTOLOGIN_DEL_LIVE)
