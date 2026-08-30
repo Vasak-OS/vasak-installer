@@ -128,6 +128,144 @@ class LimpiezaDelMedioLive(unittest.TestCase):
         )
 
 
+class GreeterDelSistemaInstalado(unittest.TestCase):
+    """El equipo instalado tiene que pedir contraseña, y poder pedirla.
+
+    Las dos mitades tienen historia. `etc/greetd/config.toml` estaba en
+    `RASTROS_CRITICOS`, heredado de cuando instalaba calamares copiando el
+    squashfs de la ISO: ahí el archivo del destino era, efectivamente, el del
+    medio live. Con archinstall el destino se arma con `pacstrap` y ese archivo
+    lo escribe el hook de `vasak-session-manager`, así que borrarlo dejaba el
+    equipo sin greeter — instalado, arrancando, y sin forma de entrar.
+    """
+
+    AUTOLOGIN_DEL_LIVE = """[terminal]
+vt = 7
+
+[initial_session]
+command = "vasak-session"
+user = "vasak"
+
+[default_session]
+command = "/usr/bin/vasak-session-manager-launch"
+user = "greeter"
+"""
+
+    REFERENCIA = """[terminal]
+vt = 7
+
+[default_session]
+command = "/usr/bin/vasak-session-manager-launch"
+user = "greeter"
+"""
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp(prefix="vsk-greetd-"))
+        self.eventos_previos = vasakos.RUTA_EVENTOS
+        vasakos.RUTA_EVENTOS = None
+        self.config = self.raiz / "etc" / "greetd" / "config.toml"
+        self.referencia = (
+            self.raiz / "usr" / "share" / "vasak-session-manager" / "greetd.toml"
+        )
+
+    def tearDown(self):
+        vasakos.RUTA_EVENTOS = self.eventos_previos
+        shutil.rmtree(self.raiz, ignore_errors=True)
+
+    def _escribir(self, ruta, contenido):
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(contenido, encoding="utf-8")
+        return ruta
+
+    def _con_cuentas(self, *nombres):
+        lineas = ["root:x:0:0::/root:/bin/bash"]
+        lineas += [f"{n}:x:1000:1000::/home/{n}:/bin/bash" for n in nombres]
+        self._escribir(self.raiz / "etc" / "passwd", "\n".join(lineas) + "\n")
+
+    # ── La regresión ────────────────────────────────────────────────────────
+    def test_la_config_de_greetd_no_esta_entre_los_rastros_que_se_borran(self):
+        # Ésta es la prueba del error: mientras estuvo en la lista, la limpieza
+        # borraba del sistema instalado el archivo que escribe el hook de
+        # vasak-session-manager, y el equipo quedaba sin greeter.
+        self.assertNotIn("etc/greetd/config.toml", vasakos.RASTROS_CRITICOS)
+        self.assertNotIn("etc/greetd/config.toml", vasakos.RASTROS_COSMETICOS)
+
+    def test_la_limpieza_no_toca_la_config_de_greetd(self):
+        self._escribir(self.config, self.REFERENCIA)
+
+        vasakos._limpiar_rastros_del_live(self.raiz)
+
+        self.assertTrue(self.config.exists(), "la limpieza se llevó el greeter")
+
+    # ── El autologin heredado ───────────────────────────────────────────────
+    def test_el_autologin_del_live_se_reemplaza_por_la_referencia(self):
+        self._escribir(self.config, self.AUTOLOGIN_DEL_LIVE)
+        self._escribir(self.referencia, self.REFERENCIA)
+        self._con_cuentas("pato")  # `vasak` no está: es la cuenta del medio live
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertTrue(self.config.exists(), "quedó sin configuración")
+        self.assertIsNone(vasakos._autologin_de(self.config))
+        self.assertIn("vasak-session-manager-launch", self.config.read_text())
+
+    def test_sin_referencia_se_quita_antes_que_dejar_el_autologin(self):
+        self._escribir(self.config, self.AUTOLOGIN_DEL_LIVE)
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        # Un equipo al que no se puede entrar se arregla; uno que entra solo
+        # sin contraseña no se nota.
+        self.assertFalse(self.config.exists())
+
+    def test_un_toml_roto_no_esconde_el_autologin(self):
+        # Si no parsea, darlo por «no hay autologin» sería justo el error que
+        # este control existe para evitar.
+        self._escribir(self.config, "esto no es toml [[[\n" + self.AUTOLOGIN_DEL_LIVE)
+        self._escribir(self.referencia, self.REFERENCIA)
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertIsNone(vasakos._autologin_de(self.config))
+
+    # ── Lo que no hay que tocar ─────────────────────────────────────────────
+    def test_un_autologin_a_una_cuenta_que_existe_se_respeta(self):
+        self._escribir(self.config, self.AUTOLOGIN_DEL_LIVE)
+        self._escribir(self.referencia, self.REFERENCIA)
+        self._con_cuentas("vasak")  # acá sí existe: es una decisión, no un rastro
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertEqual(vasakos._autologin_de(self.config), "vasak")
+
+    def test_una_config_sin_autologin_queda_intacta(self):
+        self._escribir(self.config, self.REFERENCIA)
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertEqual(self.config.read_text(), self.REFERENCIA)
+
+    # ── El greeter que falta ────────────────────────────────────────────────
+    def test_si_no_hay_config_se_pone_la_referencia(self):
+        self._escribir(self.referencia, self.REFERENCIA)
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)
+
+        self.assertTrue(self.config.exists())
+        self.assertEqual(self.config.read_text(), self.REFERENCIA)
+
+    def test_sin_config_ni_referencia_avisa_en_vez_de_paniquear(self):
+        self._con_cuentas("pato")
+
+        vasakos._asegurar_greetd(self.raiz)  # no levanta
+
+        self.assertFalse(self.config.exists())
+
+
 class Entrecomillado(unittest.TestCase):
     def test_un_apostrofo_no_cierra_la_comilla(self):
         # «O'Connor» no es un nombre raro, y `arch_chroot` pasa la cadena por un

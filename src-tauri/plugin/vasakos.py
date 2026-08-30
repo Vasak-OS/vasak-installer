@@ -41,6 +41,7 @@ import json
 import os
 import re
 import shutil
+import tomllib
 from pathlib import Path
 
 # ── Canal de eventos ────────────────────────────────────────────────────────
@@ -200,6 +201,7 @@ def on_install(installation=None, *_args, **_kwargs):
     ajustes = (
         ("teclado del escritorio", _configurar_teclado_xkb, False),
         ("limpieza del medio live", _limpiar_rastros_del_live, True),
+        ("greeter del sistema instalado", _asegurar_greetd, True),
         ("espejos de VasakOS", _asegurar_mirrorlist, False),
     )
     for indice, (nombre, funcion, critico) in enumerate(ajustes):
@@ -328,6 +330,22 @@ def _configurar_teclado_xkb(destino):
 # Sale de la lista que aplicaba `shellprocess-final.conf` de calamares, revisada:
 # las entradas de sddm y plymouth de ahí ya no aplican —VasakOS usa greetd con
 # vasak-session-manager— y estaban borrando archivos que no existen.
+#
+# Con calamares esta limpieza era el único control: instalaba **copiando el
+# squashfs** de la ISO (`unpackfs`), así que el sistema instalado nacía con
+# todo lo del medio live adentro. archinstall no copia nada —hace `pacstrap`
+# desde los repositorios—, y hoy los cuatro archivos de acá existen sólo en
+# `archiso/airootfs/`: ningún paquete los trae, así que en el destino no
+# aparecen. Esto queda igual, como red: cuesta nada borrar lo que no está, y el
+# día que un paquete empiece a enviar uno de estos archivos el control ya está
+# puesto.
+#
+# Lo que **no** puede estar en esta lista es un archivo que el sistema instalado
+# tenga por derecho propio. `etc/greetd/config.toml` estuvo, heredado de la
+# época de calamares, y era el único de los cinco que de verdad existía en el
+# destino: lo escribe el hook de `vasak-session-manager` durante el pacstrap.
+# Borrarlo dejaba el equipo instalado sin greeter. Lo suyo se comprueba en
+# `_asegurar_greetd`, que mira el contenido en vez de borrar el archivo.
 # Los que **tienen que** desaparecer. Si alguno queda, el sistema instalado le da
 # privilegios de root a cualquiera con una sesión abierta, sin pedir contraseña.
 #
@@ -346,9 +364,6 @@ RASTROS_CRITICOS = [
     # usuario live no tiene una—; heredarla en el sistema instalado dejaría a
     # cualquiera del grupo wheel abrir un proceso root sin autenticarse.
     "etc/polkit-1/rules.d/49-vasak-installer.rules",
-    # La configuración de greetd de la ISO: hace **autologin** del usuario
-    # `vasak` sin contraseña. Heredada, el equipo instalado abre sesión solo.
-    "etc/greetd/config.toml",
 ]
 
 # Andamiaje del arranque de la ISO. Que quede alguno ensucia, no abre nada, así
@@ -415,6 +430,124 @@ def _limpiar_rastros_del_live(destino):
         raise RastroCriticoPersistente(
             "quedaron en el sistema instalado archivos que dan privilegios sin "
             "autenticación: " + ", ".join(f"/{r}" for r in quedaron)
+        )
+
+
+class AutologinHeredado(Exception):
+    """El sistema instalado abre sesión sola con una cuenta que no está."""
+
+
+def _usuarios_de(destino):
+    """Las cuentas del sistema instalado, según su propio `/etc/passwd`.
+
+    `None` si no se pudo leer, que no es lo mismo que «no hay ninguna» y por eso
+    no se responde con un conjunto vacío: quien pregunta tiene que poder
+    distinguir «esta cuenta no existe» de «no sé qué cuentas hay».
+    """
+    try:
+        texto = (destino / "etc" / "passwd").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return {linea.split(":", 1)[0] for linea in texto.splitlines() if ":" in linea}
+
+
+def _autologin_de(config):
+    """La cuenta a la que greetd le abre sesión sin pedir nada, si hay alguna.
+
+    `None` cuando no hay `[initial_session]`, que es lo que corresponde en un
+    sistema instalado: ahí la sesión se abre después de escribir la contraseña.
+    """
+    try:
+        texto = config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    try:
+        inicial = tomllib.loads(texto).get("initial_session")
+    except tomllib.TOMLDecodeError:
+        # Un archivo que no parsea puede tener el autologin adentro igual, y
+        # darlo por «no hay» sería justo el error que este control existe para
+        # evitar. Se busca la sección a mano, como hace con `sed` el hook de
+        # vasak-session-manager.
+        seccion = re.search(
+            r"^\[initial_session\](.*?)(?=^\[|\Z)", texto, re.MULTILINE | re.DOTALL
+        )
+        if seccion is None:
+            return None
+        usuario = re.search(r'^\s*user\s*=\s*"([^"]*)"', seccion.group(1), re.MULTILINE)
+        return usuario.group(1) if usuario else None
+
+    if not isinstance(inicial, dict):
+        return None
+    usuario = inicial.get("user")
+    return usuario if isinstance(usuario, str) and usuario else None
+
+
+def _asegurar_greetd(destino):
+    """Que el equipo instalado pida quién sos, y que tenga con qué preguntarlo.
+
+    Son dos cosas y las dos se rompen calladas.
+
+    La primera es que no herede el **autologin** del medio live, que abre la
+    sesión del usuario `vasak` sin contraseña. En el destino esa cuenta no
+    existe, así que además de ser autologin no funciona: el arranque queda en un
+    bucle de login que falla.
+
+    La segunda es que quede una configuración. Antes esto se resolvía borrando
+    `etc/greetd/config.toml`, y con calamares —que instalaba copiando el
+    squashfs de la ISO— tenía sentido, porque el archivo que había ahí era el
+    del live. Con archinstall el destino se arma con `pacstrap` y ese archivo lo
+    escribe el hook de `vasak-session-manager`: borrarlo dejaba el equipo
+    instalado sin greeter, es decir sin forma de entrar. Por eso ahora se mira
+    el contenido, y el arreglo es reemplazar, no quitar.
+    """
+    config = destino / "etc" / "greetd" / "config.toml"
+    referencia = destino / "usr" / "share" / "vasak-session-manager" / "greetd.toml"
+
+    if not config.exists():
+        # Sin configuración greetd arranca y no sabe qué levantar. Que falte es
+        # raro —el hook la escribe—, pero si falta, ponerla es barato.
+        if not referencia.exists():
+            registrar("greetd quedó sin configuración y no hay referencia que copiar", "warn")
+            return
+        config.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(referencia, config)
+        registrar("greetd no tenía configuración: se puso la de vasak-session-manager")
+        return
+
+    usuario = _autologin_de(config)
+    if usuario is None:
+        return
+
+    cuentas = _usuarios_de(destino)
+    if cuentas is not None and usuario in cuentas:
+        # La cuenta existe: no es el rastro del live, es una decisión. Cambiarla
+        # sería pisar lo que alguien pidió.
+        registrar(f"greetd abre sesión sola con «{usuario}», que existe: se deja como está")
+        return
+
+    if referencia.exists():
+        shutil.copyfile(referencia, config)
+        registrar(
+            f"greetd abría sesión sola con «{usuario}», que no existe en el sistema "
+            "instalado: se puso la configuración de vasak-session-manager"
+        )
+    else:
+        # Sin referencia hay que elegir, y se elige que no abra sesión sola: un
+        # equipo al que no se puede entrar se arregla; uno que entra solo, no se
+        # nota.
+        config.unlink()
+        registrar(
+            f"greetd abría sesión sola con «{usuario}», que no existe, y no hay "
+            "referencia que poner en su lugar: se quitó la configuración",
+            "warn",
+        )
+
+    quedo = _autologin_de(config) if config.exists() else None
+    if quedo is not None:
+        raise AutologinHeredado(
+            f"el sistema instalado sigue abriendo sesión sola con «{quedo}», una "
+            "cuenta que no existe"
         )
 
 
