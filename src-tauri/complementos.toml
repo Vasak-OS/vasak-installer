@@ -123,7 +123,10 @@ icono = "scanner"
 # alternativos— así que se explica y se deja elegir.
 #
 # Los controladores libres de AMD e Intel ya vienen en `vasakos-desktop` vía
-# mesa: acá sólo va lo que se suma.
+# mesa: acá va **sólo lo que se suma**, y eso es literal. Un paquete que el
+# metapaquete ya arrastra no puede estar también acá: la casilla se dibujaría,
+# el usuario la desmarcaría, y el paquete se instalaría igual por dependencia.
+# `build-all.sh` avisa cuando las dos listas se pisan.
 
 [[complemento]]
 id = "nvidia-propietario"
@@ -135,21 +138,25 @@ detectar = "gpu-nvidia"
 [[complemento]]
 id = "nvidia-libre"
 categoria = "drivers"
-paquetes = ["xf86-video-nouveau", "mesa"]
+# `nouveau` como módulo del kernel ya viene con `linux`, y `mesa` con el
+# metapaquete: lo único que falta para una NVIDIA con el driver libre es su
+# Vulkan. Antes acá decía `xf86-video-nouveau`, que es el driver de **Xorg** y
+# en un escritorio Wayland no lo usa nadie.
+paquetes = ["vulkan-nouveau"]
 icono = "preferences-desktop-display"
 detectar = "gpu-nvidia"
 
 [[complemento]]
 id = "amd-vulkan"
 categoria = "drivers"
-paquetes = ["vulkan-radeon", "lib32-vulkan-radeon", "libva-mesa-driver"]
+paquetes = ["vulkan-radeon", "lib32-vulkan-radeon"]
 icono = "preferences-desktop-display"
 detectar = "gpu-amd"
 
 [[complemento]]
 id = "intel-vulkan"
 categoria = "drivers"
-paquetes = ["vulkan-intel", "lib32-vulkan-intel", "intel-media-driver"]
+paquetes = ["vulkan-intel", "lib32-vulkan-intel"]
 icono = "preferences-desktop-display"
 detectar = "gpu-intel"
 
@@ -171,7 +178,7 @@ icono = "applications-office"
 [[complemento]]
 id = "desarrollo"
 categoria = "extras"
-paquetes = ["base-devel", "git", "code"]
+paquetes = ["base-devel", "code"]
 icono = "applications-development"
 
 [[complemento]]
