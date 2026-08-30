@@ -13,7 +13,9 @@
  * es un paquete más en la ISO.
  */
 import { computed, nextTick, ref, watch } from 'vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 import { buscarOpciones, type Opcion } from '@/tools/buscar';
+import { ICONO_DESPLEGABLE } from '@/tools/iconos';
 
 interface Props {
 	modelValue: string;
@@ -100,7 +102,7 @@ watch(abierto, (esta) => {
           {{ seleccionada.detalle }}
         </span>
       </span>
-      <span class="shrink-0 text-tx-muted text-xs" aria-hidden="true">▾</span>
+      <IconoSistema :nombre="ICONO_DESPLEGABLE" clase="size-3 text-tx-muted" />
     </button>
 
     <div

@@ -113,10 +113,7 @@ fn a_xkb(keymap_consola: &str) -> (String, String) {
 
     let mut base = limpio.to_string();
     // En bucle y no una vez: `de-latin1-nodeadkeys` tiene dos sufijos.
-    loop {
-        let Some(sufijo) = SUFIJOS.iter().find(|s| base.ends_with(**s)) else {
-            break;
-        };
+    while let Some(sufijo) = SUFIJOS.iter().find(|s| base.ends_with(**s)) {
         base.truncate(base.len() - sufijo.len());
     }
 

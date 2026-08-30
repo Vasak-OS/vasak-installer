@@ -515,7 +515,7 @@ mod tests {
         let plan = layout::planificar(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true).unwrap();
         let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
 
-        assert_eq!(vista.particiones[0].cifrada, false, "el ESP nunca va cifrado");
+        assert!(!vista.particiones[0].cifrada, "el ESP nunca va cifrado");
         assert!(vista.particiones[1].cifrada, "la raíz sí");
     }
 

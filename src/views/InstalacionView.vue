@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, nextTick, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import Icono from '@/components/ui/Icono.vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import ProgressBar from '@/components/ui/ProgressBar.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
@@ -136,13 +136,13 @@ watch(
               "
               aria-hidden="true"
             >
-              <Icono :nombre="ICONO_PASO_INSTALACION[clave] ?? ''" clase="size-4" />
+              <IconoSistema :nombre="ICONO_PASO_INSTALACION[clave] ?? ''" clase="size-4" />
               <span
                 v-if="estadoDe(clave) === 'hecho' || estadoDe(clave) === 'fallado'"
                 class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full"
                 :class="estadoDe(clave) === 'hecho' ? 'bg-status-success' : 'bg-status-error'"
               >
-                <Icono
+                <IconoSistema
                   :nombre="estadoDe(clave) === 'hecho' ? ICONO_HECHO : ICONO_FALLADO"
                   clase="size-3"
                 />

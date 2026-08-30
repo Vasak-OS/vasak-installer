@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import Icono from '@/components/ui/Icono.vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 import { ICONO_MENSAJE } from '@/tools/iconos';
 
 interface Props {
@@ -52,7 +52,7 @@ const rol = computed(() => (props.tipo === 'error' ? 'alert' : 'status'));
       queda flotando a la mitad del párrafo y deja de leerse como su marca.
     -->
     <span class="mt-0.5" :class="colorIcono">
-      <Icono :nombre="icono" clase="size-5" />
+      <IconoSistema :nombre="icono" clase="size-5" />
     </span>
     <div class="min-w-0 flex-1">
       <p v-if="titulo" class="font-semibold text-sm">{{ titulo }}</p>

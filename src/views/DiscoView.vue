@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import Icono from '@/components/ui/Icono.vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
@@ -104,7 +104,7 @@ onMounted(async () => {
                 "
                 aria-hidden="true"
               >
-                <Icono :nombre="iconoDeDisco(disco)" tipo="icono" clase="size-7" />
+                <IconoSistema :nombre="iconoDeDisco(disco)" tipo="icono" clase="size-7" />
               </span>
               <span class="min-w-0 flex-1 truncate font-medium text-sm">{{ disco.modelo }}</span>
               <span class="shrink-0 font-mono text-sm">{{ tamano(disco.tamano_bytes) }}</span>
@@ -230,7 +230,7 @@ onMounted(async () => {
           >
             <div class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 font-medium">
-                <Icono :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
+                <IconoSistema :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
                 {{
                   particion.rol === 'esp'
                     ? t('disco.rolEsp')
