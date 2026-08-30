@@ -142,7 +142,7 @@ watch(
                 class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full"
                 :class="estadoDe(clave) === 'hecho' ? 'bg-status-success' : 'bg-status-error'"
               >
-                <Icono
+                <IconoSistema
                   :nombre="estadoDe(clave) === 'hecho' ? ICONO_HECHO : ICONO_FALLADO"
                   clase="size-3"
                 />

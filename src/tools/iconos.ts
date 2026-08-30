@@ -45,6 +45,16 @@ export const ICONO_PASO_INSTALACION: Record<string, string> = {
 	cierre: 'object-select',
 };
 
+/**
+ * La flecha del desplegable, en el selector buscable.
+ *
+ * `pan-down` es el nombre que GTK usa para exactamente esta flecha —la de un
+ * combo o un expansor— y el tema lo tiene. Acá había un `▾` escrito a mano: un
+ * carácter de texto no sigue el tema de iconos, se dibuja con la tipografía que
+ * haya y cambia de forma y de peso entre una fuente y otra.
+ */
+export const ICONO_DESPLEGABLE = 'pan-down';
+
 /** Marca de paso terminado, y de paso que falló. */
 export const ICONO_HECHO = 'object-select';
 export const ICONO_FALLADO = 'dialog-error';
@@ -115,6 +125,7 @@ export function todosLosIconos(): string[] {
 		...Object.values(ICONO_EQUIPO),
 		ICONO_HECHO,
 		ICONO_FALLADO,
+		ICONO_DESPLEGABLE,
 		iconoDeDisco({ nvme: true, rotacional: false }),
 		iconoDeDisco({ nvme: false, rotacional: true }),
 		iconoDeDisco({ nvme: false, rotacional: false }),
