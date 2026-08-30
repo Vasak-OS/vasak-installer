@@ -2,6 +2,11 @@
 /**
  * Un icono del tema del sistema.
  *
+ * Se llama `IconoSistema` y no `Icono` porque un nombre de componente de una
+ * sola palabra puede chocar con un elemento HTML —hoy o cuando la especificación
+ * agregue uno— y además dice menos: éste trae el icono **del tema del sistema**,
+ * no un icono cualquiera.
+ *
  * `tipo="icono"` trae la versión a color —la que el escritorio muestra en todas
  * partes— y `tipo="simbolo"` el glifo monocromo. La elección no es estética: un
  * navegador se reconoce por su logo, y en glifo monocromo Firefox, Chromium y

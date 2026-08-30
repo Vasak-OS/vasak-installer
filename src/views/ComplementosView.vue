@@ -2,7 +2,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import Icono from '@/components/ui/Icono.vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
@@ -80,7 +80,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
             :key="descripcion"
             class="flex items-center gap-2 text-sm"
           >
-            <Icono nombre="computer-chip" />
+            <IconoSistema nombre="computer-chip" />
             {{ descripcion }}
           </li>
         </ul>
@@ -127,7 +127,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
             >
               <template v-if="loPropusoElHardware(complemento)" #pie>
                 <span class="mt-1 flex items-center gap-1.5 text-status-success text-xs">
-                  <Icono nombre="object-select" clase="size-3" />
+                  <IconoSistema nombre="object-select" clase="size-3" />
                   {{ t('complementos.propuestoPorHardware') }}
                 </span>
               </template>

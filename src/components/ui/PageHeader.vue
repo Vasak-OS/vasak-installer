@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import Icono from '@/components/ui/Icono.vue';
+import IconoSistema from '@/components/ui/IconoSistema.vue';
 
 interface Props {
 	titulo: string;
@@ -21,7 +21,7 @@ defineProps<Props>();
       v-if="icono"
       class="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-corner border border-ui-border-strong bg-ui-surface/50"
     >
-      <Icono :nombre="icono" clase="size-6" />
+      <IconoSistema :nombre="icono" clase="size-6" />
     </span>
     <div class="min-w-0">
       <h1 class="font-semibold text-xl">{{ titulo }}</h1>

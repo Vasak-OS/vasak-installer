@@ -204,10 +204,10 @@ pub fn preseleccion(catalogo: &[Complemento], hardware: &BTreeSet<String>) -> Ve
             continue;
         }
 
-        if c.exclusivo {
-            if !categorias_exclusivas_tomadas.insert(c.categoria) {
-                continue;
-            }
+        // Entre los exclusivos de una categoría queda el primero del catálogo que
+        // califique: `insert` devuelve `false` si esa categoría ya fue tomada.
+        if c.exclusivo && !categorias_exclusivas_tomadas.insert(c.categoria) {
+            continue;
         }
         elegidos.push(c.id.clone());
     }
