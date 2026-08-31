@@ -706,7 +706,9 @@ class Plugin:
     def on_add_bootloader(self, installation=None):
         return on_add_bootloader(installation)
 
-    def on_user_create(self, installation=None, user=None):
+    # `_installation` con guion bajo: archinstall lo pasa —este gancho recibe dos
+    # argumentos— y acá no se usa. El nombre lo deja dicho y calla a ARG002.
+    def on_user_create(self, _installation=None, user=None):
         return on_user_create(user)
 
     def on_user_created(self, installation=None, user=None):
