@@ -389,5 +389,87 @@ class PasosDelProtocolo(unittest.TestCase):
         self.assertIs(vasakos.on_add_bootloader(None), False)
 
 
+class ContratoConArchinstall(unittest.TestCase):
+    """Que archinstall pueda cargar el plugin y llamar sus ganchos.
+
+    Esto se rompió entero en la primera instalación real y no lo cubría nada:
+    el plugin tenía los ganchos como funciones de módulo, que es lo que uno
+    supondría leyendo la documentación, y archinstall no llama a ninguna. Busca
+    una clase `Plugin`, la instancia, y llama los ganchos **sobre el objeto**.
+
+    Encima el error visible era otro: `load_plugin` lee
+    `__archinstall__version__` sin `hasattr` delante, así que reventaba con
+    AttributeError antes de llegar a mirar si había entry-point. Arreglar sólo
+    eso habría dado una instalación que «anda» sin ejecutar un solo gancho: sin
+    progreso, sin limpieza del medio live, sin verificar el repositorio. Nada
+    de eso falla de forma visible.
+    """
+
+    def test_declara_la_version_de_archinstall_como_numero(self):
+        # Se compara con `<` contra un float, así que una cadena revienta con
+        # TypeError en lugar de avisar.
+        self.assertIsInstance(vasakos.__archinstall__version__, float)
+
+    def test_existe_la_clase_que_archinstall_instancia(self):
+        # `plugins[namespace] = sys.modules[namespace].Plugin()`
+        self.assertTrue(hasattr(vasakos, "Plugin"))
+        vasakos.Plugin()  # tiene que poder construirse sin argumentos
+
+    def test_la_clase_expone_todos_los_ganchos_del_modulo(self):
+        # Un gancho que existe como función y no como método no se llama nunca.
+        plugin = vasakos.Plugin()
+        faltan = [
+            n
+            for n in dir(vasakos)
+            if n.startswith("on_") and callable(getattr(vasakos, n))
+            and not hasattr(plugin, n)
+        ]
+        self.assertEqual(faltan, [], f"ganchos sin método: {faltan}")
+
+    def test_las_firmas_son_las_que_archinstall_usa(self):
+        """Cada gancho se llama con los argumentos de su sitio real.
+
+        Salen de archinstall/lib/installer.py. `on_user_create` es el que
+        engaña: se invoca con **dos** argumentos, la instalación y el usuario.
+        """
+        plugin = vasakos.Plugin()
+        instalacion = object()
+
+        # (nombre, argumentos posicionales tal como los pasa archinstall)
+        llamadas = [
+            ("on_mirrors", (None,)),
+            ("on_genfstab", (instalacion,)),
+            ("on_mkinitcpio", (instalacion,)),
+            ("on_add_bootloader", (instalacion,)),
+            ("on_user_create", (instalacion, None)),
+            ("on_user_created", (instalacion, None)),
+            ("on_service", (None,)),
+            ("on_timezone", (None,)),
+        ]
+
+        for nombre, args in llamadas:
+            with self.subTest(gancho=nombre):
+                metodo = getattr(plugin, nombre)
+                try:
+                    metodo(*args)
+                except TypeError as error:
+                    if "argument" in str(error):
+                        self.fail(f"{nombre} no acepta lo que archinstall pasa: {error}")
+                    raise
+
+    def test_los_ganchos_salteables_devuelven_falso_desde_la_clase(self):
+        """Un valor verdadero le dice a archinstall «ya lo hice, no lo hagas».
+
+        Vale para el módulo y también para la clase, que es la que se llama de
+        verdad: si `on_genfstab` devolviera algo verdadero, archinstall no
+        escribiría el fstab y el sistema instalado no arrancaría.
+        """
+        plugin = vasakos.Plugin()
+        instalacion = object()
+        self.assertFalse(plugin.on_genfstab(instalacion))
+        self.assertFalse(plugin.on_mkinitcpio(instalacion))
+        self.assertFalse(plugin.on_add_bootloader(instalacion))
+
+
 if __name__ == "__main__":
     unittest.main()

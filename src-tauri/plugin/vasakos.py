@@ -44,6 +44,22 @@ import shutil
 import tomllib
 from pathlib import Path
 
+# La versión de archinstall contra la que está escrito este plugin.
+#
+# No es opcional, aunque su propio comentario diga que sí: `load_plugin` hace
+#
+#     if sys.modules[namespace].__archinstall__version__ < float(...)
+#
+# sin `hasattr` delante, así que un plugin que no la define no arranca — revienta
+# con AttributeError antes de que se cargue nada, y la instalación termina en el
+# primer segundo.
+#
+# Tiene que ser un número, no una cadena: se compara con `<` contra un `float`.
+# Y el número con el que se compara es `get_version().rsplit(".", 1)[0]`, o sea
+# «4» para archinstall 4.4. Si el nuestro es menor, archinstall anota un error y
+# sigue; por eso acá va la versión real contra la que se probó.
+__archinstall__version__ = 4.4
+
 # ── Canal de eventos ────────────────────────────────────────────────────────
 
 RUTA_EVENTOS = os.environ.get("VASAK_INSTALLER_EVENTOS")
@@ -647,3 +663,62 @@ def _entrecomillar(valor):
     comilla y el resto del nombre se ejecutaría como comando.
     """
     return "'" + valor.replace("'", "'\\''") + "'"
+
+
+# ── El punto de entrada ─────────────────────────────────────────────────────
+#
+# archinstall no llama a las funciones del módulo. Importa el archivo, busca una
+# clase llamada `Plugin`, la instancia, y guarda **el objeto**:
+#
+#     plugins[namespace] = sys.modules[namespace].Plugin()
+#
+# y después cada gancho lo invoca sobre ese objeto:
+#
+#     for plugin in plugins.values():
+#         if hasattr(plugin, "on_install"):
+#             plugin.on_install(self)
+#
+# Sin esta clase, `load_plugin` avisa «missing a valid entry-point», la
+# instalación sigue como si no hubiera plugin, y **ningún gancho corre**: sin
+# progreso en la interfaz, sin limpieza del medio live, sin verificar el
+# repositorio. Nada de eso falla de forma visible, que es lo peor que podía
+# pasar.
+#
+# Los métodos no hacen el trabajo, delegan. Las funciones de arriba son las que
+# están probadas y las que se pueden llamar sin archinstall instalado.
+#
+# Las firmas son las de los sitios donde archinstall llama, no las que uno
+# supondría. `on_user_create` es el caso que engaña: se invoca
+# `plugin.on_user_create(self, user)` —dos argumentos, la instalación y el
+# usuario—, y no sólo el usuario.
+class Plugin:
+    """Lo que archinstall instancia para hablar con nosotros."""
+
+    def on_mirrors(self, mirrors=None):
+        return on_mirrors(mirrors)
+
+    def on_genfstab(self, installation=None):
+        return on_genfstab(installation)
+
+    def on_mkinitcpio(self, installation=None):
+        return on_mkinitcpio(installation)
+
+    def on_add_bootloader(self, installation=None):
+        return on_add_bootloader(installation)
+
+    # `_installation` con guion bajo: archinstall lo pasa —este gancho recibe dos
+    # argumentos— y acá no se usa. El nombre lo deja dicho y calla a ARG002.
+    def on_user_create(self, _installation=None, user=None):
+        return on_user_create(user)
+
+    def on_user_created(self, installation=None, user=None):
+        return on_user_created(installation, user)
+
+    def on_service(self, service=None):
+        return on_service(service)
+
+    def on_timezone(self, timezone=None):
+        return on_timezone(timezone)
+
+    def on_install(self, installation=None):
+        return on_install(installation)
