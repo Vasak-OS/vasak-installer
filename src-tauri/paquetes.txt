@@ -40,3 +40,8 @@ linux-headers
 # sí es lo que hace que un escritorio instalado tenga la tipografía completa.
 # Por eso va acá: esta lista es la del sistema instalado.
 noto-fonts-extra
+
+# `fastfetch` imprime el resumen del sistema. No hace falta para instalar, así
+# que no tiene por qué ocupar lugar en la imagen, pero sí es lo que alguien
+# espera encontrar en su terminal recién instalada.
+fastfetch

@@ -178,7 +178,11 @@ icono = "applications-office"
 [[complemento]]
 id = "desarrollo"
 categoria = "extras"
-paquetes = ["base-devel", "code"]
+# `git` estuvo un rato en ninguna lista: salió de acá cuando `vasakos-desktop` lo
+# arrastraba —la casilla no cambiaba nada— y después salió del metapaquete, que
+# es donde no corresponde: es una herramienta de desarrollo, no parte del
+# escritorio. Acá sí, que es donde se elige.
+paquetes = ["base-devel", "git", "code"]
 icono = "applications-development"
 
 [[complemento]]
