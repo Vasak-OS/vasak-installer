@@ -28,3 +28,15 @@ vasakos-desktop
 # contra ellos.
 linux
 linux-headers
+
+# FUENTES QUE NO VAN EN LA ISO
+#
+# `noto-fonts-extra` son 331 MB y era el paquete más grande de la imagen. No
+# está en las `depends` de `vasakos-desktop` a propósito: ahí lo heredaría
+# también el medio live, que no lo necesita para instalar.
+#
+# Sacarlo no pierde cobertura de ningún idioma —son variantes de peso y ancho de
+# las mismas familias, no alfabetos; los alfabetos están en `noto-fonts`— pero
+# sí es lo que hace que un escritorio instalado tenga la tipografía completa.
+# Por eso va acá: esta lista es la del sistema instalado.
+noto-fonts-extra
