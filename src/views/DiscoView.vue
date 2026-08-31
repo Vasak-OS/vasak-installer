@@ -231,13 +231,7 @@ onMounted(async () => {
             <div class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 font-medium">
                 <IconoSistema :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
-                {{
-                  particion.rol === 'esp'
-                    ? t('disco.rolEsp')
-                    : particion.rol === 'bios_grub'
-                      ? t('disco.rolBiosGrub')
-                      : t('disco.rolRaiz')
-                }}
+                {{ particion.rol === 'esp' ? t('disco.rolEsp') : t('disco.rolRaiz') }}
               </span>
               <span class="font-mono text-xs">{{ tamano(particion.tamano_bytes) }}</span>
             </div>

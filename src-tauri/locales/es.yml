@@ -190,7 +190,6 @@ disco:
   seVaAPerder: Se va a perder
   seVaAPerderVacio: El disco no tiene nada.
   rolEsp: Partición de arranque EFI
-  rolBiosGrub: Arranque BIOS
   rolRaiz: Sistema
   subvolumenes: Subvolúmenes
   opcionesMontaje: Opciones de montaje

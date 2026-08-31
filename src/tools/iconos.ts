@@ -88,7 +88,6 @@ export function iconoDeDisco(disco: { nvme: boolean; rotacional: boolean }): str
 /** El rol de una partición en la vista previa del particionado. */
 export const ICONO_ROL_PARTICION: Record<string, string> = {
 	esp: 'system-shutdown',
-	bios_grub: 'system-shutdown',
 	raiz: 'drive-harddisk',
 };
 

@@ -189,7 +189,6 @@ disco:
   seVaAPerder: What will be lost
   seVaAPerderVacio: The disk is empty.
   rolEsp: EFI boot partition
-  rolBiosGrub: BIOS boot
   rolRaiz: System
   subvolumenes: Subvolumes
   opcionesMontaje: Mount options

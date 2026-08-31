@@ -94,7 +94,7 @@ export interface Catalogos {
 }
 
 export interface ParticionVistaPrevia {
-	rol: 'esp' | 'bios_grub' | 'raiz';
+	rol: 'esp' | 'raiz';
 	inicio_bytes: number;
 	tamano_bytes: number;
 	sistema_archivos: string | null;
