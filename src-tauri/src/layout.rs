@@ -37,12 +37,6 @@ const INICIO_MIB: u64 = 1;
 /// `pacman` fallando por espacio en `/boot` deja un sistema que no arranca.
 const ESP_MIB: u64 = 1024;
 
-/// La partición `bios_grub` de los equipos sin UEFI.
-///
-/// No lleva sistema de archivos ni punto de montaje: GRUB escribe su segunda
-/// etapa en crudo ahí porque en GPT no existe el hueco post-MBR que usaba en
-/// discos MBR. 2 MiB es lo que recomienda GRUB y sobra.
-const BIOS_GRUB_MIB: u64 = 2;
 
 /// Lo que se deja libre al final del disco.
 ///
@@ -92,7 +86,7 @@ pub struct ParticionExistente {
     pub sistema_operativo: Option<String>,
 }
 
-/// El firmware del equipo. Decide si hay ESP o `bios_grub`.
+/// El firmware del equipo. Decide si hay ESP o si no hay partición de arranque.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Firmware {
@@ -106,9 +100,9 @@ pub enum Firmware {
 pub struct ParticionPlaneada {
     pub inicio_mib: u64,
     pub tamano_mib: u64,
-    /// `None` en `bios_grub`: no lleva sistema de archivos.
+    /// Siempre presente: archinstall lo exige para toda partición que crea.
     pub sistema_archivos: Option<&'static str>,
-    /// `None` cuando no se monta —`bios_grub`— y también en la raíz btrfs con
+    /// `None` en la raíz btrfs con
     /// subvolúmenes: ahí el punto de montaje lo lleva el subvolumen `@`, y
     /// poner los dos hace que archinstall monte la partición encima de sus
     /// propios subvolúmenes.
@@ -125,7 +119,6 @@ pub struct ParticionPlaneada {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rol {
-    BiosGrub,
     Esp,
     Raiz,
 }
@@ -233,20 +226,21 @@ pub fn planificar(
             });
             cursor += ESP_MIB;
         }
-        Firmware::Bios => {
-            plan.push(ParticionPlaneada {
-                inicio_mib: cursor,
-                tamano_mib: BIOS_GRUB_MIB,
-                sistema_archivos: None,
-                punto_montaje: None,
-                opciones_montaje: Vec::new(),
-                banderas: vec!["bios_grub"],
-                subvolumenes: Vec::new(),
-                cifrada: false,
-                rol: Rol::BiosGrub,
-            });
-            cursor += BIOS_GRUB_MIB;
-        }
+        // En BIOS no se crea ninguna partición de arranque, y **eso es el
+        // arreglo**: acá antes iba una `bios_grub`, que es lo que pide GPT. Pero
+        // archinstall elige la tabla por el firmware —`PartitionTable.default()`
+        // devuelve MBR cuando no hay UEFI— y en MBR esa partición no va: GRUB
+        // escribe su segunda etapa en el hueco que queda entre el MBR y la
+        // primera partición, que existe porque `INICIO_MIB` la empieza recién en
+        // el MiB 1.
+        //
+        // Mandarla igual rompía la instalación de dos maneras. Sin sistema de
+        // archivos, `_setup_partition` moría en `safe_fs_type` con «File system
+        // type is not set» antes de crear nada; y aunque lo llevara,
+        // `PartitionFlag` de archinstall no conoce `bios_grub` —sólo boot,
+        // xbootldr, esp, linux-home y swap—, así que la bandera se descartaba en
+        // silencio y quedaba una partición de 2 MiB sin sentido.
+        Firmware::Bios => {}
     }
 
     // Lo que sobra, menos la reserva del final. La resta se hace con
@@ -372,20 +366,55 @@ mod tests {
         }
     }
 
+    /// En BIOS el disco es una sola partición, y el arranque no lleva ninguna.
+    ///
+    /// archinstall elige la tabla por el firmware: MBR cuando no hay UEFI. En MBR
+    /// no existe la partición `bios_grub` —eso es de GPT—, y GRUB escribe su
+    /// segunda etapa en el hueco entre el MBR y la primera partición.
+    ///
+    /// Mandarla igual rompía la instalación **antes de escribir nada**: sin
+    /// sistema de archivos, archinstall muere en `safe_fs_type` con «File system
+    /// type is not set». Y aunque lo llevara, su `PartitionFlag` no conoce
+    /// `bios_grub` y la bandera se descartaba en silencio.
     #[test]
-    fn bios_arma_bios_grub_sin_montarla() {
+    fn en_bios_la_raiz_es_la_unica_particion() {
         let plan = planificar(&disco_de(50), Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
 
-        assert_eq!(plan[0].rol, Rol::BiosGrub);
-        assert_eq!(plan[0].tamano_mib, 2);
-        // Sin sistema de archivos y sin punto de montaje: GRUB escribe crudo.
-        // Si alguna de las dos se pusiera, `mkfs` la formatearía y el fstab
-        // intentaría montar 2 MiB sin filesystem en cada arranque.
-        assert!(plan[0].sistema_archivos.is_none());
-        assert!(plan[0].punto_montaje.is_none());
-        assert_eq!(plan[0].banderas, vec!["bios_grub"]);
-        // Y no hay ESP: en BIOS no existe.
+        assert_eq!(plan.len(), 1, "{plan:?}");
+        assert_eq!(plan[0].rol, Rol::Raiz);
+        // No hay ESP: en BIOS no existe.
         assert!(!plan.iter().any(|p| p.rol == Rol::Esp));
+    }
+
+    #[test]
+    fn en_bios_queda_el_hueco_que_grub_necesita() {
+        // El MiB 0 es lo que GRUB usa para su segunda etapa en MBR. Si la raíz
+        // empezara en 0 no habría dónde escribirla y el disco no arrancaría.
+        let plan = planificar(&disco_de(50), Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
+        assert_eq!(plan[0].inicio_mib, 1);
+    }
+
+    /// Ninguna partición puede salir sin sistema de archivos.
+    ///
+    /// `_setup_partition` de archinstall pide `safe_fs_type` para **todas** las
+    /// que crea, y esa propiedad lanza si el valor es `None`. Una partición sin
+    /// filesystem mata la instalación en el paso de particionado.
+    #[test]
+    fn ninguna_particion_sale_sin_sistema_de_archivos() {
+        for firmware in [Firmware::Uefi, Firmware::Bios] {
+            for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+                for cifrar in [false, true] {
+                    let plan = planificar(&disco_de(50), firmware, fs, cifrar).unwrap();
+                    for p in &plan {
+                        assert!(
+                            p.sistema_archivos.is_some(),
+                            "{:?} sale sin filesystem con {firmware:?}/{fs:?}",
+                            p.rol
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

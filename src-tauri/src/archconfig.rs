@@ -535,6 +535,67 @@ zsh";
         );
     }
 
+    /// Lo que mató la instalación en BIOS: una partición con `fs_type` en `null`.
+    ///
+    /// `_setup_partition` de archinstall pide `safe_fs_type` para **todas** las
+    /// que crea, y esa propiedad lanza `ValueError('File system type is not set')`
+    /// si el valor no está. Pasaba con la `bios_grub`, que ya no se arma, pero la
+    /// prueba mira el JSON —que es lo que archinstall lee— y no el plan.
+    #[test]
+    fn ninguna_particion_del_json_va_sin_fs_type() {
+        let d = disco();
+        for firmware in [Firmware::Uefi, Firmware::Bios] {
+            for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+                let particiones = planificar(&d, firmware, fs, false).unwrap();
+                let c = configuracion(
+                    &plan(false),
+                    &particiones,
+                    d.sector_logico,
+                    firmware,
+                    &["base".to_string()],
+                    &Aporte::default(),
+                    Some("4.4.0"),
+                );
+                let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
+                    .as_array()
+                    .expect("hay particiones");
+                assert!(!del_json.is_empty());
+                for p in del_json {
+                    assert!(
+                        p["fs_type"].is_string(),
+                        "fs_type = {} con {firmware:?}/{fs:?}",
+                        p["fs_type"]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn en_bios_el_json_lleva_una_sola_particion_y_ninguna_bandera_de_arranque() {
+        // archinstall arma MBR cuando no hay UEFI, y su `PartitionFlag` no conoce
+        // `bios_grub`: mandarla era una partición de 2 MiB que él descartaba en
+        // silencio y que además le hacía fallar el paso entero.
+        let d = disco();
+        let particiones = planificar(&d, Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
+        let c = configuracion(
+            &plan(false),
+            &particiones,
+            d.sector_logico,
+            Firmware::Bios,
+            &["base".to_string()],
+            &Aporte::default(),
+            Some("4.4.0"),
+        );
+        let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(del_json.len(), 1, "{del_json:#?}");
+        assert_eq!(del_json[0]["mountpoint"], "/");
+        assert!(del_json[0]["flags"].as_array().unwrap().is_empty());
+    }
+
     #[test]
     fn el_repositorio_de_vasakos_va_en_la_configuracion() {
         let c = config(false);

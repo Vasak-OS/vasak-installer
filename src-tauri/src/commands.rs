@@ -219,7 +219,6 @@ fn vista_previa_de(
             .iter()
             .map(|p| ParticionVistaPrevia {
                 rol: match p.rol {
-                    Rol::BiosGrub => "bios_grub".into(),
                     Rol::Esp => "esp".into(),
                     Rol::Raiz => "raiz".into(),
                 },
