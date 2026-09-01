@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
@@ -8,6 +8,7 @@ import ProgressBar from '@/components/ui/ProgressBar.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_FALLADO, ICONO_HECHO, ICONO_PASO, ICONO_PASO_INSTALACION } from '@/tools/iconos';
+import { comoLapso, segundosDesde } from '@/tools/transcurrido';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
@@ -15,6 +16,42 @@ const store = useInstalacionStore();
 const mostrarRegistro = ref(false);
 const confirmandoCancelar = ref(false);
 const cajaRegistro = ref<HTMLElement | null>(null);
+
+/**
+ * El reloj de la instalación.
+ *
+ * Está acá por un motivo concreto: **la barra se queda quieta**. `pacstrap` puede
+ * tardar veinte minutos sin informar fracción, así que el avance general no se
+ * mueve ni un píxel, y alguien mirando eso no puede distinguir «está trabajando»
+ * de «se colgó».
+ *
+ * Un reloj que corre contesta eso sin inventar nada: no dice cuánto falta —no se
+ * sabe— pero se mueve cada segundo y el movimiento viene de algo real. Una
+ * animación que finja avance sería peor que la barra quieta, porque mentiría con
+ * más convicción.
+ */
+const inicio = ref(0);
+const ahora = ref(0);
+let reloj: ReturnType<typeof setInterval> | null = null;
+
+const transcurrido = computed(() =>
+	inicio.value === 0 ? '' : comoLapso(segundosDesde(inicio.value, ahora.value))
+);
+
+onMounted(() => {
+	inicio.value = Date.now();
+	ahora.value = inicio.value;
+	// Cada segundo, aunque el texto cambie de minuto en minuto después del primero:
+	// el tic es lo que hace que la pantalla se sienta viva, y un intervalo de un
+	// segundo no cuesta nada al lado de un pacstrap.
+	reloj = setInterval(() => {
+		ahora.value = Date.now();
+	}, 1000);
+});
+
+onUnmounted(() => {
+	if (reloj !== null) clearInterval(reloj);
+});
 
 const emit = defineEmits<{ cancelar: [] }>();
 
@@ -52,6 +89,18 @@ const pasoActual = computed(() => {
 function estadoDe(clave: string) {
 	return store.progreso.get(clave)?.estado ?? 'pendiente';
 }
+
+/**
+ * Si el paso en curso no sabe cuánto le falta.
+ *
+ * Cuando no lo sabe se muestra una barra indefinida además de la general. La
+ * general sigue diciendo la verdad —cuántos pasos van— y la indefinida dice «este
+ * paso está andando», que es la pregunta que alguien se hace cuando nada se
+ * mueve.
+ */
+const pasoSinFraccion = computed(
+	() => pasoActual.value?.estado === 'en_curso' && pasoActual.value.fraccion === null
+);
 
 // El registro se desplaza solo hasta el final, pero **sólo si ya estaba abajo**.
 // Sin esa condición, alguien que sube a leer una línea de error es arrastrado
@@ -97,9 +146,20 @@ watch(
             <p class="font-medium text-sm">
               {{ pasoActual ? t(`instalacion.pasos.${pasoActual.paso}`) : t('comun.cargando') }}
             </p>
-            <p v-if="avance !== null" class="shrink-0 text-tx-muted text-xs">
-              {{ Math.round(avance * 100) }}%
-            </p>
+            <div class="flex shrink-0 items-baseline gap-2 text-tx-muted text-xs">
+              <!-- El reloj con cifras de ancho fijo: sin `tabular-nums` el número
+                   cambia de ancho al pasar de 9 a 10 y el porcentaje de al lado se
+                   corre, que es movimiento que no informa nada. -->
+              <span v-if="transcurrido" class="tabular-nums">{{ transcurrido }}</span>
+              <span v-if="avance !== null">{{ Math.round(avance * 100) }}%</span>
+            </div>
+          </div>
+
+          <!-- La barra indefinida del paso, sólo cuando no informa fracción.
+               Va **además** de la general y no en su lugar: la general dice
+               cuántos pasos van, que es información real que no hay que tapar. -->
+          <div v-if="pasoSinFraccion" class="mt-2">
+            <ProgressBar :valor="null" :label="t('instalacion.trabajando')" />
           </div>
           <p v-if="pasoActual?.detalle" class="mt-1 truncate font-mono text-tx-muted text-xs">
             {{ pasoActual.detalle }}
@@ -129,7 +189,7 @@ watch(
                 estadoDe(clave) === 'hecho'
                   ? 'border-status-success/60 bg-status-success/15'
                   : estadoDe(clave) === 'en_curso'
-                    ? 'border-secondary bg-primary/20'
+                    ? 'border-secondary bg-primary/20 animate-pulse motion-reduce:animate-none'
                     : estadoDe(clave) === 'fallado'
                       ? 'border-status-error bg-status-error/20'
                       : 'border-ui-border-strong bg-ui-surface/30'
