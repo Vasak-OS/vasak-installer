@@ -29,13 +29,16 @@ const MIB: u64 = 1024 * 1024;
 /// sigue.
 const INICIO_MIB: u64 = 1;
 
-/// La partición del sistema EFI, montada en `/boot`.
+/// La partición de arranque, montada en `/boot`.
+///
+/// La misma medida en UEFI y en BIOS: cambia el sistema de archivos y la bandera,
+/// no para qué sirve.
 ///
 /// 1 GiB y no 512 MiB porque en `/boot` viven el kernel y **los dos** initramfs
 /// (el normal y el de respaldo), y cada actualización de kernel los reescribe.
 /// Con 512 MiB un sistema con dos kernels y microcódigo queda al borde, y
 /// `pacman` fallando por espacio en `/boot` deja un sistema que no arranca.
-const ESP_MIB: u64 = 1024;
+const ARRANQUE_MIB: u64 = 1024;
 
 
 /// Lo que se deja libre al final del disco.
@@ -119,6 +122,7 @@ pub struct ParticionPlaneada {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rol {
+    /// La partición de arranque: el ESP en UEFI, `/boot` a secas en BIOS.
     Esp,
     Raiz,
 }
@@ -203,11 +207,13 @@ pub fn planificar(
     let mut plan = Vec::with_capacity(2);
     let mut cursor = INICIO_MIB;
 
+    // Las dos ramas crean una partición de arranque de 1 GiB montada en `/boot`.
+    // Lo que cambia es el sistema de archivos y la bandera.
     match firmware {
         Firmware::Uefi => {
             plan.push(ParticionPlaneada {
                 inicio_mib: cursor,
-                tamano_mib: ESP_MIB,
+                tamano_mib: ARRANQUE_MIB,
                 sistema_archivos: Some("fat32"),
                 punto_montaje: Some("/boot"),
                 // El ESP es FAT y FAT no tiene permisos: sin `umask` queda
@@ -224,23 +230,64 @@ pub fn planificar(
                 cifrada: false,
                 rol: Rol::Esp,
             });
-            cursor += ESP_MIB;
+            cursor += ARRANQUE_MIB;
         }
-        // En BIOS no se crea ninguna partición de arranque, y **eso es el
-        // arreglo**: acá antes iba una `bios_grub`, que es lo que pide GPT. Pero
-        // archinstall elige la tabla por el firmware —`PartitionTable.default()`
-        // devuelve MBR cuando no hay UEFI— y en MBR esa partición no va: GRUB
-        // escribe su segunda etapa en el hueco que queda entre el MBR y la
-        // primera partición, que existe porque `INICIO_MIB` la empieza recién en
-        // el MiB 1.
+        // En BIOS va un `/boot` de verdad: ext4 y con la bandera `boot`.
         //
-        // Mandarla igual rompía la instalación de dos maneras. Sin sistema de
-        // archivos, `_setup_partition` moría en `safe_fs_type` con «File system
-        // type is not set» antes de crear nada; y aunque lo llevara,
-        // `PartitionFlag` de archinstall no conoce `bios_grub` —sólo boot,
-        // xbootldr, esp, linux-home y swap—, así que la bandera se descartaba en
-        // silencio y quedaba una partición de 2 MiB sin sentido.
-        Firmware::Bios => {}
+        // No es simetría por prolijidad, es lo que archinstall **exige**.
+        // `add_bootloader` empieza con
+        //
+        //     boot_partition = self._get_boot_partition()
+        //     if boot_partition is None:
+        //         raise ValueError(f'Could not detect boot at mountpoint {self.target}')
+        //
+        // y `get_boot_partition` filtra por `x.is_boot() and x.mountpoint`, o sea
+        // bandera `boot` **y** punto de montaje. Sin una partición así la
+        // instalación muere al llegar al gestor de arranque, con el disco ya
+        // formateado y los paquetes ya instalados — el peor momento posible.
+        //
+        // En BIOS la usa nada más que para deducir el disco:
+        //
+        //     parent_dev_path = get_parent_device_path(boot_partition.safe_dev_path)
+        //     ['--target=i386-pc', '--recheck', str(parent_dev_path)]
+        //
+        // Hubo dos intentos antes de éste, y ninguno servía:
+        //
+        // 1. Una `bios_grub` de 2 MiB, que es lo que pide GPT. Pero archinstall
+        //    elige la tabla por el firmware —`PartitionTable.default()` devuelve
+        //    MBR sin UEFI— y en MBR no va; además, sin sistema de archivos
+        //    `_setup_partition` moría en `safe_fs_type`, y `PartitionFlag` no
+        //    conoce `bios_grub` (sólo boot, xbootldr, esp, linux-home y swap), así
+        //    que la bandera se descartaba en silencio.
+        // 2. Ninguna partición de arranque. Eso arregló el particionado y dejó
+        //    este error, que es el que aparece ahora en el registro.
+        //
+        // Poner la bandera en la raíz tampoco alcanza: con btrfs la raíz no lleva
+        // punto de montaje —lo lleva el subvolumen `@`— y el filtro pide los dos.
+        // Y btrfs es el sistema por defecto, así que fallaría justo en el camino
+        // más usado.
+        //
+        // GRUB sigue escribiendo su segunda etapa en el hueco entre el MBR y la
+        // primera partición, que existe porque `INICIO_MIB` arranca en el MiB 1.
+        Firmware::Bios => {
+            plan.push(ParticionPlaneada {
+                inicio_mib: cursor,
+                tamano_mib: ARRANQUE_MIB,
+                // ext4 y no fat32: acá no hay firmware que tenga que leerlo, y
+                // ext4 conserva permisos y no se corrompe con un apagón a medio
+                // escribir el initramfs.
+                sistema_archivos: Some("ext4"),
+                punto_montaje: Some("/boot"),
+                opciones_montaje: Vec::new(),
+                // Sólo `boot`: `esp` marcaría una partición de sistema EFI en un
+                // disco que arranca por BIOS.
+                banderas: vec!["boot"],
+                subvolumenes: Vec::new(),
+                cifrada: false,
+                rol: Rol::Esp,
+            });
+            cursor += ARRANQUE_MIB;
+        }
     }
 
     // Lo que sobra, menos la reserva del final. La resta se hace con
@@ -366,30 +413,77 @@ mod tests {
         }
     }
 
-    /// En BIOS el disco es una sola partición, y el arranque no lleva ninguna.
+    /// **Los dos firmwares tienen que dar una partición de arranque montada.**
     ///
-    /// archinstall elige la tabla por el firmware: MBR cuando no hay UEFI. En MBR
-    /// no existe la partición `bios_grub` —eso es de GPT—, y GRUB escribe su
-    /// segunda etapa en el hueco entre el MBR y la primera partición.
+    /// Éste es el test del error que apareció instalando en BIOS:
     ///
-    /// Mandarla igual rompía la instalación **antes de escribir nada**: sin
-    /// sistema de archivos, archinstall muere en `safe_fs_type` con «File system
-    /// type is not set». Y aunque lo llevara, su `PartitionFlag` no conoce
-    /// `bios_grub` y la bandera se descartaba en silencio.
+    /// ```text
+    /// ValueError: Could not detect boot at mountpoint /mnt
+    /// ```
+    ///
+    /// `add_bootloader` de archinstall arranca con `_get_boot_partition()`, y
+    /// `get_boot_partition` filtra por `x.is_boot() and x.mountpoint` — bandera
+    /// `boot` **y** punto de montaje. Sin una partición así la instalación muere
+    /// al llegar al gestor de arranque, con el disco ya formateado y los paquetes
+    /// ya instalados. El peor momento para fallar.
+    ///
+    /// Se comprueba para los dos firmwares y para los dos sistemas de archivos:
+    /// con btrfs la raíz no lleva punto de montaje —lo lleva el subvolumen `@`—,
+    /// así que poner la bandera en la raíz no habría alcanzado justo en el camino
+    /// por defecto.
     #[test]
-    fn en_bios_la_raiz_es_la_unica_particion() {
-        let plan = planificar(&disco_de(50), Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
+    fn siempre_hay_una_particion_de_arranque_que_archinstall_reconoce() {
+        for firmware in [Firmware::Uefi, Firmware::Bios] {
+            for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+                let plan = planificar(&disco_de(50), firmware, fs, false).unwrap();
 
-        assert_eq!(plan.len(), 1, "{plan:?}");
-        assert_eq!(plan[0].rol, Rol::Raiz);
-        // No hay ESP: en BIOS no existe.
-        assert!(!plan.iter().any(|p| p.rol == Rol::Esp));
+                let arranque = plan
+                    .iter()
+                    .find(|p| p.banderas.contains(&"boot") && p.punto_montaje.is_some())
+                    .unwrap_or_else(|| {
+                        panic!("{firmware:?}/{fs:?}: ninguna partición con bandera boot y punto de montaje: {plan:?}")
+                    });
+
+                assert_eq!(arranque.punto_montaje, Some("/boot"), "{firmware:?}/{fs:?}");
+                assert_eq!(arranque.rol, Rol::Esp, "{firmware:?}/{fs:?}");
+                // Con sistema de archivos: sin él, archinstall muere antes en
+                // `safe_fs_type` con «File system type is not set».
+                assert!(
+                    arranque.sistema_archivos.is_some(),
+                    "{firmware:?}/{fs:?}: la partición de arranque sin sistema de archivos"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn en_bios_el_arranque_es_ext4_y_sin_esp() {
+        // `esp` marcaría una partición de sistema EFI en un disco que arranca por
+        // BIOS, y fat32 no hace falta porque acá no hay firmware que lo lea.
+        let plan = planificar(&disco_de(50), Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
+        let arranque = &plan[0];
+
+        assert_eq!(arranque.sistema_archivos, Some("ext4"));
+        assert_eq!(arranque.banderas, vec!["boot"]);
+        assert!(!arranque.banderas.contains(&"esp"), "{arranque:?}");
+    }
+
+    #[test]
+    fn en_uefi_el_arranque_sigue_siendo_el_esp() {
+        // Que el arreglo de BIOS no haya cambiado el camino que ya funcionaba.
+        let plan = planificar(&disco_de(50), Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let esp = &plan[0];
+
+        assert_eq!(esp.sistema_archivos, Some("fat32"));
+        assert_eq!(esp.banderas, vec!["boot", "esp"]);
+        assert!(esp.opciones_montaje.iter().any(|o| o.contains("umask")));
     }
 
     #[test]
     fn en_bios_queda_el_hueco_que_grub_necesita() {
-        // El MiB 0 es lo que GRUB usa para su segunda etapa en MBR. Si la raíz
-        // empezara en 0 no habría dónde escribirla y el disco no arrancaría.
+        // El MiB 0 es lo que GRUB usa para su segunda etapa en MBR. Si la primera
+        // partición empezara en 0 no habría dónde escribirla y el disco no
+        // arrancaría.
         let plan = planificar(&disco_de(50), Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
         assert_eq!(plan[0].inicio_mib, 1);
     }

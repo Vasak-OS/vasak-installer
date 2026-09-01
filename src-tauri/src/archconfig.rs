@@ -571,13 +571,62 @@ zsh";
         }
     }
 
+    /// **El JSON tiene que llevar una partición que archinstall reconozca como
+    /// arranque, en los dos firmwares.**
+    ///
+    /// Es el mismo control que en `layout`, pero sobre lo que de verdad se le
+    /// entrega a archinstall: entre el plan y el JSON hay una traducción, y un
+    /// error ahí da el mismo `Could not detect boot at mountpoint /mnt` con el
+    /// plan perfectamente bien.
     #[test]
-    fn en_bios_el_json_lleva_una_sola_particion_y_ninguna_bandera_de_arranque() {
-        // archinstall arma MBR cuando no hay UEFI, y su `PartitionFlag` no conoce
-        // `bios_grub`: mandarla era una partición de 2 MiB que él descartaba en
-        // silencio y que además le hacía fallar el paso entero.
+    fn el_json_siempre_lleva_una_particion_de_arranque() {
+        for firmware in [Firmware::Uefi, Firmware::Bios] {
+            for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+                let d = disco();
+                let particiones = planificar(&d, firmware, fs, false).unwrap();
+                let c = configuracion(
+                    &plan(false),
+                    &particiones,
+                    d.sector_logico,
+                    firmware,
+                    &["base".to_string()],
+                    &Aporte::default(),
+                    Some("4.4.0"),
+                );
+                let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
+                    .as_array()
+                    .unwrap();
+
+                // Lo que hace `get_boot_partition`: bandera `boot` y punto de
+                // montaje, las dos cosas en la misma partición.
+                let arranque = del_json
+                    .iter()
+                    .find(|p| {
+                        let con_bandera = p["flags"]
+                            .as_array()
+                            .map(|f| f.iter().any(|x| x == "boot"))
+                            .unwrap_or(false);
+                        con_bandera && !p["mountpoint"].is_null()
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("{firmware:?}/{fs:?}: el JSON no lleva partición de arranque: {del_json:#?}")
+                    });
+
+                assert_eq!(arranque["mountpoint"], "/boot", "{firmware:?}/{fs:?}");
+                assert!(
+                    !arranque["fs_type"].is_null(),
+                    "{firmware:?}/{fs:?}: sin fs_type archinstall muere en safe_fs_type"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn en_bios_el_json_no_marca_ninguna_esp() {
+        // `esp` en un disco que arranca por BIOS marca una partición de sistema
+        // EFI que nadie va a leer.
         let d = disco();
-        let particiones = planificar(&d, Firmware::Bios, SistemaArchivos::Ext4, false).unwrap();
+        let particiones = planificar(&d, Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
         let c = configuracion(
             &plan(false),
             &particiones,
@@ -591,9 +640,14 @@ zsh";
             .as_array()
             .unwrap();
 
-        assert_eq!(del_json.len(), 1, "{del_json:#?}");
-        assert_eq!(del_json[0]["mountpoint"], "/");
-        assert!(del_json[0]["flags"].as_array().unwrap().is_empty());
+        for p in del_json {
+            if let Some(banderas) = p["flags"].as_array() {
+                assert!(
+                    !banderas.iter().any(|x| x == "esp"),
+                    "en BIOS quedó una bandera esp: {p:#?}"
+                );
+            }
+        }
     }
 
     #[test]

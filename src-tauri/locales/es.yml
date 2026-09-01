@@ -363,6 +363,7 @@ instalacion:
   titulo: Instalando VasakOS
   intro: Puede tardar entre quince minutos y una hora, según la conexión.
   noApagues: No apagues el equipo ni cierres esta ventana.
+  trabajando: Trabajando…
   registro: Registro
   # `{0}` es el paso actual, `{1}` el total. La interfaz usa dos llamadas.
   pasoActual: "Paso {0}"
