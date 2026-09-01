@@ -216,6 +216,9 @@ def on_install(installation=None, *_args, **_kwargs):
     # funciona, apenas con el teclado equivocado o sin poder actualizarse.
     ajustes = (
         ("configuración de las cuentas", _sembrar_skel, False),
+        # Con `installation` porque necesita el chroot; las demás sólo miran
+        # archivos del destino.
+        ("nombre en el menú de arranque", lambda d: _rehacer_grub(d, installation), False),
         ("teclado del escritorio", _configurar_teclado_xkb, False),
         ("limpieza del medio live", _limpiar_rastros_del_live, True),
         ("greeter del sistema instalado", _asegurar_greetd, True),
@@ -459,6 +462,45 @@ def _limpiar_rastros_del_live(destino):
 # sesión entera. Lo que se ve es una pantalla negra y la vuelta al inicio de
 # sesión, medio minuto después, sin un solo mensaje de error.
 CONFIG_DE_SESION = ".config/wayfire.ini"
+
+# El drop-in que le pone el nombre a VasakOS en el menú de arranque.
+DROPIN_GRUB = "etc/default/grub.d/10-vasakos.cfg"
+
+
+def _rehacer_grub(destino, installation):
+    """Vuelve a generar `grub.cfg` para que el menú diga VasakOS.
+
+    Hace falta por el orden de archinstall. En `guided.py`:
+
+        line 118:  installation.add_bootloader(...)
+        line 146:  installation.add_additional_packages(...)
+
+    `grub.cfg` se genera en la línea 118, cuando todavía no está instalado
+    `vasak-desktop-settings` —que es quien trae el drop-in con
+    `GRUB_DISTRIBUTOR="VasakOS"`—. Así que el primer menú se arma leyendo el
+    `/etc/default/grub` de Arch, que dice `GRUB_DISTRIBUTOR="Arch"`, y el arranque
+    queda con el nombre equivocado hasta la próxima actualización de kernel.
+
+    Regenerarlo acá es la única forma de que el primer arranque ya esté bien: no
+    hay gancho entre el `pacman.strap('grub')` que hace archinstall y su
+    `grub-mkconfig`.
+
+    Si falla no se aborta: el sistema arranca igual, sólo que el menú dice Arch.
+    """
+    if not (destino / DROPIN_GRUB).is_file():
+        # Sin el drop-in no hay nada que ganar regenerando, y decirlo importa:
+        # significa que `vasak-desktop-settings` no llegó a instalarse.
+        registrar(f"no está /{DROPIN_GRUB}: el menú de arranque va a decir Arch", "warn")
+        return
+
+    if not (destino / "boot" / "grub").is_dir():
+        # Instalación sin GRUB —otro gestor de arranque— o el directorio no quedó
+        # donde se espera. No es un error nuestro.
+        registrar("no hay /boot/grub: no se regenera el menú")
+        return
+
+    installation.arch_chroot("grub-mkconfig -o /boot/grub/grub.cfg")
+    registrar("menú de arranque regenerado con el nombre de VasakOS")
 
 
 def _sembrar_skel(destino):

@@ -522,6 +522,80 @@ class ConfiguracionDeLasCuentas(unittest.TestCase):
         vasakos._sembrar_skel(self.raiz)  # no levanta
 
 
+class NombreEnElMenuDeArranque(unittest.TestCase):
+    """Que el menú de arranque diga VasakOS y no Arch.
+
+    El paquete `grub` trae /etc/default/grub con `GRUB_DISTRIBUTOR="Arch"`, y ese
+    valor le gana a os-release y a lsb_release porque `10_linux` sólo los consulta
+    cuando está vacío. El drop-in de vasak-desktop-settings lo corrige, pero llega
+    **después** de que archinstall genere grub.cfg —bootloader en `guided.py:118`,
+    paquetes en la 146— así que el primer menú se arma sin él.
+    """
+
+    class Falsa:
+        """Lo mínimo de `installation` que usa `_rehacer_grub`."""
+
+        def __init__(self):
+            self.ordenes = []
+
+        def arch_chroot(self, orden):
+            self.ordenes.append(orden)
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp(prefix="vsk-grub-"))
+        self.eventos_previos = vasakos.RUTA_EVENTOS
+        vasakos.RUTA_EVENTOS = None
+        self.inst = self.Falsa()
+
+    def tearDown(self):
+        vasakos.RUTA_EVENTOS = self.eventos_previos
+        shutil.rmtree(self.raiz, ignore_errors=True)
+
+    def _con_dropin(self):
+        d = self.raiz / vasakos.DROPIN_GRUB
+        d.parent.mkdir(parents=True, exist_ok=True)
+        d.write_text('GRUB_DISTRIBUTOR="VasakOS"\n', encoding="utf-8")
+
+    def _con_grub(self):
+        (self.raiz / "boot" / "grub").mkdir(parents=True, exist_ok=True)
+
+    def test_con_el_dropin_puesto_se_regenera(self):
+        self._con_dropin()
+        self._con_grub()
+
+        vasakos._rehacer_grub(self.raiz, self.inst)
+
+        self.assertEqual(self.inst.ordenes, ["grub-mkconfig -o /boot/grub/grub.cfg"])
+
+    def test_sin_el_dropin_no_se_regenera(self):
+        # Regenerar sin el drop-in no cambia nada: el menú saldría igual con el
+        # nombre de Arch. Lo que importa es que quede avisado, porque significa
+        # que vasak-desktop-settings no se instaló.
+        self._con_grub()
+
+        vasakos._rehacer_grub(self.raiz, self.inst)
+
+        self.assertEqual(self.inst.ordenes, [])
+
+    def test_sin_grub_no_se_intenta(self):
+        # Otro gestor de arranque, o el directorio no quedó donde se espera.
+        self._con_dropin()
+
+        vasakos._rehacer_grub(self.raiz, self.inst)
+
+        self.assertEqual(self.inst.ordenes, [])
+
+    def test_esta_en_el_flujo_de_on_install(self):
+        import inspect
+
+        fuente = inspect.getsource(vasakos.on_install)
+        self.assertIn(
+            "_rehacer_grub",
+            fuente,
+            "_rehacer_grub no está en la lista de ajustes de on_install",
+        )
+
+
 class ContratoConArchinstall(unittest.TestCase):
     """Que archinstall pueda cargar el plugin y llamar sus ganchos.
 
