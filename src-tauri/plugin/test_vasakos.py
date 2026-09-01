@@ -389,6 +389,139 @@ class PasosDelProtocolo(unittest.TestCase):
         self.assertIs(vasakos.on_add_bootloader(None), False)
 
 
+class ConfiguracionDeLasCuentas(unittest.TestCase):
+    """Que cada cuenta reciba lo que `/etc/skel` trae.
+
+    Esto se rompió en la primera instalación real y el síntoma no se parecía en
+    nada a la causa: **pantalla negra y vuelta al inicio de sesión, treinta
+    segundos después, sin un solo mensaje de error**.
+
+    La cadena era: archinstall crea los usuarios en `guided.py:136` y recién
+    instala los paquetes en `guided.py:146`, así que cuando nace la cuenta
+    `/etc/skel` todavía no tiene el `wayfire.ini` de `vasak-desktop-settings`. Sin
+    ese archivo no hay `[autostart] 0_env = uwsm finalize`; sin ese `finalize` la
+    unidad `wayland-wm@` de uwsm —que es `Type=notify` con `TimeoutStartSec=30`—
+    nunca recibe el aviso de «listo», falla a los treinta segundos, y su
+    `OnFailure=wayland-session-shutdown.target` se lleva la sesión entera.
+    """
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp(prefix="vsk-skel-"))
+        self.eventos_previos = vasakos.RUTA_EVENTOS
+        vasakos.RUTA_EVENTOS = None
+        self.skel = self.raiz / "etc" / "skel"
+        self.skel.mkdir(parents=True)
+        (self.raiz / "home").mkdir()
+
+    def tearDown(self):
+        vasakos.RUTA_EVENTOS = self.eventos_previos
+        shutil.rmtree(self.raiz, ignore_errors=True)
+
+    def _hogar(self, nombre):
+        h = self.raiz / "home" / nombre
+        h.mkdir()
+        return h
+
+    def _en_skel(self, relativo, contenido="x"):
+        ruta = self.skel / relativo
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(contenido, encoding="utf-8")
+        return ruta
+
+    # ── La regresión ────────────────────────────────────────────────────────
+    def test_la_cuenta_recibe_la_configuracion_de_la_sesion(self):
+        # El archivo sin el que la sesión gráfica no arranca.
+        self._en_skel(vasakos.CONFIG_DE_SESION, "[autostart]\n0_env = uwsm finalize\n")
+        hogar = self._hogar("pato")
+
+        vasakos._sembrar_skel(self.raiz)
+
+        puesto = hogar / vasakos.CONFIG_DE_SESION
+        self.assertTrue(puesto.is_file(), "la cuenta quedó sin wayfire.ini")
+        self.assertIn("uwsm finalize", puesto.read_text(encoding="utf-8"))
+
+    def test_se_copian_los_directorios_anidados(self):
+        # `.config/gtk-3.0/settings.ini` son dos niveles: sin crear los
+        # intermedios no se copia nada y no falla nada.
+        self._en_skel(".config/gtk-3.0/settings.ini")
+        self._en_skel(".config/gtk-4.0/settings.ini")
+        hogar = self._hogar("pato")
+
+        vasakos._sembrar_skel(self.raiz)
+
+        self.assertTrue((hogar / ".config/gtk-3.0/settings.ini").is_file())
+        self.assertTrue((hogar / ".config/gtk-4.0/settings.ini").is_file())
+
+    # ── Lo que no hay que tocar ─────────────────────────────────────────────
+    def test_no_se_sobrescribe_lo_que_ya_esta(self):
+        # Esto también corre si se reinstala sobre un /home existente, y ahí lo
+        # que la persona tenía escrito no se toca.
+        self._en_skel(vasakos.CONFIG_DE_SESION, "del paquete")
+        hogar = self._hogar("pato")
+        propio = hogar / vasakos.CONFIG_DE_SESION
+        propio.parent.mkdir(parents=True)
+        propio.write_text("mío", encoding="utf-8")
+
+        vasakos._sembrar_skel(self.raiz)
+
+        self.assertEqual(propio.read_text(encoding="utf-8"), "mío")
+
+    def test_todas_las_cuentas_reciben_lo_suyo(self):
+        self._en_skel(vasakos.CONFIG_DE_SESION)
+        uno = self._hogar("pato")
+        otro = self._hogar("invitado")
+
+        vasakos._sembrar_skel(self.raiz)
+
+        for h in (uno, otro):
+            self.assertTrue((h / vasakos.CONFIG_DE_SESION).is_file(), h.name)
+
+    def test_un_enlace_se_recrea_como_enlace(self):
+        # Seguirlo copiaría el contenido y dejaría dos archivos donde el paquete
+        # quiso uno.
+        self._en_skel("real.conf", "contenido")
+        os.symlink("real.conf", self.skel / "alias.conf")
+        hogar = self._hogar("pato")
+
+        vasakos._sembrar_skel(self.raiz)
+
+        alias = hogar / "alias.conf"
+        self.assertTrue(alias.is_symlink(), "el enlace se copió como archivo")
+        self.assertEqual(os.readlink(alias), "real.conf")
+
+    # ── Cuando no hay nada que hacer ────────────────────────────────────────
+    def test_sin_skel_avisa_en_vez_de_paniquear(self):
+        shutil.rmtree(self.skel)
+        self._hogar("pato")
+        vasakos._sembrar_skel(self.raiz)  # no levanta
+
+    def test_sin_home_avisa_en_vez_de_paniquear(self):
+        shutil.rmtree(self.raiz / "home")
+        vasakos._sembrar_skel(self.raiz)  # no levanta
+
+    def test_el_sembrado_esta_en_el_flujo_de_on_install(self):
+        """Que no quede implementado y sin llamarse.
+
+        Es el mismo agujero que tuvo la clase `Plugin`: código correcto que nadie
+        ejecuta, y ninguna prueba se da cuenta porque la función pasa sus propios
+        tests. Acá se mira el flujo de verdad.
+        """
+        import inspect
+
+        fuente = inspect.getsource(vasakos.on_install)
+        self.assertIn(
+            "_sembrar_skel",
+            fuente,
+            "_sembrar_skel no está en la lista de ajustes de on_install",
+        )
+
+    def test_un_archivo_suelto_en_home_no_es_una_cuenta(self):
+        # `/home/perdido.txt` no es un directorio y no hay nada que sembrarle.
+        self._en_skel(vasakos.CONFIG_DE_SESION)
+        (self.raiz / "home" / "perdido.txt").write_text("x", encoding="utf-8")
+        vasakos._sembrar_skel(self.raiz)  # no levanta
+
+
 class ContratoConArchinstall(unittest.TestCase):
     """Que archinstall pueda cargar el plugin y llamar sus ganchos.
 
