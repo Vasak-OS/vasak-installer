@@ -215,6 +215,7 @@ def on_install(installation=None, *_args, **_kwargs):
     # Sólo la limpieza lo es: los otros dos dejan un sistema que arranca y
     # funciona, apenas con el teclado equivocado o sin poder actualizarse.
     ajustes = (
+        ("configuración de las cuentas", _sembrar_skel, False),
         ("teclado del escritorio", _configurar_teclado_xkb, False),
         ("limpieza del medio live", _limpiar_rastros_del_live, True),
         ("greeter del sistema instalado", _asegurar_greetd, True),
@@ -447,6 +448,111 @@ def _limpiar_rastros_del_live(destino):
             "quedaron en el sistema instalado archivos que dan privilegios sin "
             "autenticación: " + ", ".join(f"/{r}" for r in quedaron)
         )
+
+
+# El archivo sin el que la sesión gráfica no arranca.
+#
+# `wayfire.ini` trae `[autostart] 0_env = uwsm finalize`, y de ese `finalize`
+# depende todo: la unidad `wayland-wm@` de uwsm es `Type=notify` con
+# `TimeoutStartSec=30`, así que sin el aviso de «listo» systemd la da por fallada
+# a los treinta segundos y `OnFailure=wayland-session-shutdown.target` se lleva la
+# sesión entera. Lo que se ve es una pantalla negra y la vuelta al inicio de
+# sesión, medio minuto después, sin un solo mensaje de error.
+CONFIG_DE_SESION = ".config/wayfire.ini"
+
+
+def _sembrar_skel(destino):
+    """Copia a cada cuenta lo que le falte de `/etc/skel`.
+
+    # Por qué hace falta
+
+    `/etc/skel` se copia cuando **se crea** la cuenta, y archinstall crea los
+    usuarios *antes* de instalar los paquetes. En `guided.py`:
+
+        line 136:  installation.create_users(...)
+        line 146:  installation.add_additional_packages(...)
+
+    O sea que cuando nace la cuenta, `/etc/skel` tiene nada más que lo de `base`:
+    `vasak-desktop-settings` —que es quien trae `wayfire.ini`, la configuración de
+    GTK y el resto— se instala diez líneas después. El home queda vacío y nadie lo
+    nota hasta el primer inicio de sesión, que termina en una pantalla negra.
+
+    `vasak-config-migrate` no lo tapa, y está bien que no: **no crea archivos que
+    falten** —«puede que no use ese componente, y crearle configuración que no
+    pidió es justo lo contrario de esto»—. Migrar y sembrar son dos cosas
+    distintas; sembrar es de acá, que es el único momento en que el destino está
+    completo y montado.
+
+    # Qué hace y qué no
+
+    Copia sólo **lo que no está**. Nada se sobrescribe: si alguien ya tiene un
+    `wayfire.ini` propio —imposible en una instalación nueva, pero esto también
+    corre si se reinstala sobre un `/home` existente— se deja intacto.
+
+    Los dueños salen del propio directorio del home, no de `/etc/passwd`: es el
+    mismo dato y no hay que parsear nada.
+    """
+    skel = destino / "etc" / "skel"
+    if not skel.is_dir():
+        registrar("no hay /etc/skel que copiar", "warn")
+        return
+
+    hogares = destino / "home"
+    if not hogares.is_dir():
+        registrar("el sistema instalado no tiene /home", "warn")
+        return
+
+    for hogar in sorted(hogares.iterdir()):
+        if not hogar.is_dir() or hogar.is_symlink():
+            continue
+        try:
+            duenio = hogar.stat()
+        except OSError as error:
+            registrar(f"no se pudo mirar {hogar.name}: {error}", "warn")
+            continue
+
+        copiados = _copiar_lo_que_falte(skel, hogar, duenio.st_uid, duenio.st_gid)
+        registrar(f"{hogar.name}: {copiados} archivo(s) de /etc/skel")
+
+        # Y se comprueba lo que de verdad importa. Un fallo acá no aborta la
+        # instalación —el sistema arranca y se entra por consola— pero tiene que
+        # quedar dicho, porque el síntoma no se parece en nada a la causa.
+        if (skel / CONFIG_DE_SESION).is_file() and not (hogar / CONFIG_DE_SESION).is_file():
+            registrar(
+                f"{hogar.name} quedó sin {CONFIG_DE_SESION}: la sesión gráfica no va a arrancar",
+                "error",
+            )
+
+
+def _copiar_lo_que_falte(origen, destino_dir, uid, gid):
+    """Copia recursivamente lo que no exista en el destino. Devuelve cuántos."""
+    copiados = 0
+    for entrada in sorted(origen.iterdir()):
+        objetivo = destino_dir / entrada.name
+
+        if entrada.is_dir() and not entrada.is_symlink():
+            if not objetivo.exists():
+                objetivo.mkdir(parents=True)
+                os.chown(objetivo, uid, gid)
+                shutil.copymode(entrada, objetivo)
+            copiados += _copiar_lo_que_falte(entrada, objetivo, uid, gid)
+            continue
+
+        # Un enlace se recrea como enlace: seguirlo copiaría el contenido y
+        # dejaría dos archivos donde el paquete quiso uno.
+        if entrada.is_symlink():
+            if not objetivo.exists() and not objetivo.is_symlink():
+                os.symlink(os.readlink(entrada), objetivo)
+                copiados += 1
+            continue
+
+        if objetivo.exists():
+            continue
+        shutil.copy2(entrada, objetivo)
+        os.chown(objetivo, uid, gid)
+        copiados += 1
+
+    return copiados
 
 
 class AutologinHeredado(Exception):
