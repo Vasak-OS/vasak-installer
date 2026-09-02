@@ -73,8 +73,8 @@ quieta sin ningún error visible.
 
 Por eso el instalador envía **su propio plugin de archinstall**
 (`src-tauri/plugin/vasakos.py`). archinstall define ganchos `on_mirrors`,
-`on_mkinitcpio`, `on_add_bootloader`, `on_user_created`, `on_genfstab`… que se
-llaman en los puntos donde arranca cada etapa real. El plugin escribe NDJSON en
+`on_mkinitcpio`, `on_pacstrap`, `on_add_bootloader`, `on_user_created`,
+`on_genfstab`… que se llaman en los puntos donde arranca cada etapa real. El plugin escribe NDJSON en
 un archivo que el ayudante sigue como un `tail -f`, y de ahí salen los pasos de
 la interfaz.
 

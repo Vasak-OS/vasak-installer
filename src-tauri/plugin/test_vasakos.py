@@ -389,6 +389,70 @@ class PasosDelProtocolo(unittest.TestCase):
         self.assertIs(vasakos.on_add_bootloader(None), False)
 
 
+class MarcadoDelEscritorio(unittest.TestCase):
+    """Cuándo la interfaz puede decir que el escritorio está instalado.
+
+    Decía «hecho» desde `on_mkinitcpio`, que corre dentro de
+    `minimal_installation()`: tres pasos antes de que `add_additional_packages()`
+    instalara el escritorio. La barra mentía, y en la misma dirección en que
+    mentía el código que causó la pantalla negra.
+    """
+
+    def setUp(self):
+        vasakos.RUTA_EVENTOS = None
+        self.eventos = []
+        self._progreso = vasakos.progreso
+        vasakos.progreso = lambda paso, estado, fraccion=None, detalle=None: self.eventos.append(
+            (paso, estado)
+        )
+
+    def tearDown(self):
+        vasakos.progreso = self._progreso
+
+    def test_el_pacstrap_del_sistema_base_no_abre_el_escritorio(self):
+        # Son dos pacstrap y sólo el segundo trae el metapaquete.
+        vasakos.on_pacstrap(["base", "linux", "linux-firmware"])
+
+        self.assertEqual(self.eventos, [])
+
+    def test_el_pacstrap_de_los_paquetes_elegidos_si(self):
+        vasakos.on_pacstrap(["fastfetch", "firefox", vasakos.METAPAQUETE])
+
+        self.assertIn((vasakos.ESCRITORIO, "en_curso"), self.eventos)
+
+    def test_sin_lista_no_hace_nada(self):
+        vasakos.on_pacstrap(None)
+        vasakos.on_pacstrap([])
+
+        self.assertEqual(self.eventos, [])
+
+    def test_no_devuelve_nada_para_no_reemplazar_la_lista_de_paquetes(self):
+        """El retorno de este gancho **cambia lo que se instala**.
+
+            if result := plugin.on_pacstrap(packages):
+                packages = result
+
+        Devolver la propia lista sería inofensivo de casualidad; devolver un
+        `True` instalaría el paquete llamado «True». Con `None` queda intacta.
+        """
+        paquetes = [vasakos.METAPAQUETE]
+
+        self.assertIsNone(vasakos.on_pacstrap(paquetes))
+        self.assertIsNone(vasakos.Plugin().on_pacstrap(paquetes))
+
+    def test_el_initramfs_ya_no_lo_marca_como_hecho(self):
+        vasakos.on_mkinitcpio(None)
+
+        self.assertNotIn((vasakos.ESCRITORIO, "hecho"), self.eventos)
+
+    def test_lo_cierra_el_ultimo_gancho(self):
+        # Sin `installation`, los ajustes no corren —no hay destino— pero el
+        # marcado de progreso sí, que es lo que se mira acá.
+        vasakos.on_genfstab(None)
+
+        self.assertIn((vasakos.ESCRITORIO, "hecho"), self.eventos)
+
+
 class ConfiguracionDeLasCuentas(unittest.TestCase):
     """Que cada cuenta reciba lo que `/etc/skel` trae.
 
@@ -691,6 +755,9 @@ class ContratoConArchinstall(unittest.TestCase):
             ("on_mirrors", (None,)),
             ("on_genfstab", (instalacion,)),
             ("on_mkinitcpio", (instalacion,)),
+            # Un argumento: la lista de paquetes. `plugin.on_pacstrap(packages)`
+            # en lib/pacman/pacman.py.
+            ("on_pacstrap", (None,)),
             ("on_add_bootloader", (instalacion,)),
             ("on_user_create", (instalacion, None)),
             ("on_user_created", (instalacion, None)),

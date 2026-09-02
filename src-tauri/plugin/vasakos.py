@@ -77,6 +77,10 @@ CONFIGURACION = "configuracion"
 VASAKOS = "vasakos"
 CIERRE = "cierre"
 
+# El metapaquete del escritorio. Es lo que distingue el `pacstrap` de los
+# paquetes elegidos del que arma el sistema base.
+METAPAQUETE = "vasakos-desktop"
+
 
 def _escribir(objeto):
     """Agrega una línea al archivo de eventos.
@@ -197,12 +201,36 @@ def on_mkinitcpio(installation=None):
     # regeneran el initramfs son de plymouth y de UKI, que acá no se usan. Sirve
     # para mover la barra, no para afirmar que algo ya está instalado — creer eso
     # es lo que dejó los ajustes de VasakOS corriendo sobre un destino vacío.
-    terminar(ESCRITORIO)
+    #
+    # Por eso mismo acá **no** se cierra el escritorio: cerrarlo era decirle a
+    # quien mira que ya está instalado cuando todavía faltan tres pasos. Lo abre
+    # `on_pacstrap` cuando empieza de verdad y lo cierra `on_genfstab`.
     empezar(ARRANQUE, "initramfs")
     # `False` explícito, no `None`: éste es uno de los ganchos que archinstall
     # interpreta como «el plugin se encargó», y con un valor verdadero saltearía
     # la generación del initramfs y el sistema no arrancaría.
     return False
+
+
+def on_pacstrap(paquetes=None):
+    """Arranca un `pacstrap`. Es lo que dice cuándo empieza el escritorio.
+
+    Se llama en cada `pacstrap`, y son dos: el del sistema base, desde
+    `minimal_installation()`, y el de los paquetes elegidos, desde
+    `add_additional_packages()`. Se distinguen por la lista: el metapaquete del
+    escritorio sólo viene en el segundo.
+
+    **No devuelve nada, y no es un detalle de estilo.** archinstall usa el
+    retorno para *reemplazar* la lista de paquetes:
+
+        if result := plugin.on_pacstrap(packages):
+            packages = result
+
+    Un valor verdadero devuelto por descuido —un `True`, la propia lista— cambia
+    lo que se instala. Con `None` la lista queda intacta.
+    """
+    if paquetes and METAPAQUETE in paquetes:
+        empezar(ESCRITORIO)
 
 
 def on_add_bootloader(installation=None):
@@ -889,6 +917,11 @@ class Plugin:
 
     def on_mkinitcpio(self, installation=None):
         return on_mkinitcpio(installation)
+
+    def on_pacstrap(self, packages=None):
+        # Sin `return`: el retorno reemplaza la lista de paquetes. Ver
+        # `on_pacstrap`.
+        on_pacstrap(packages)
 
     def on_add_bootloader(self, installation=None):
         return on_add_bootloader(installation)
