@@ -58,6 +58,14 @@ const SERVICIOS: &[&str] = &[
     // estado pero el servicio tiene que quedar habilitado para el arranque.
     "systemd-timesyncd",
     "avahi-daemon",
+    // Resolución de nombres. El escritorio instala `systemd-resolvconf`, que es
+    // el puente para que algo que llame a `resolvconf` —un cliente de VPN, por
+    // ejemplo— le hable a `systemd-resolved`. Sin el servicio habilitado ese
+    // puente no lleva a ninguna parte: la VPN se conecta y no cambia el DNS.
+    //
+    // Va acá y no como dependencia del paquete porque habilitar un servicio del
+    // sistema es una decisión de la instalación, no del empaquetado.
+    "systemd-resolved",
 ];
 
 /// El kernel. Uno solo, el mismo que trae la ISO.
@@ -502,7 +510,7 @@ zsh";
         // PKGBUILD, que vive en otro repositorio: nombrarlas de nuevo desde acá
         // sería reinventar las dos fuentes de verdad que el metapaquete vino a
         // eliminar.
-        for imprescindible in ["vasakos-desktop", "linux", "linux-headers"] {
+        for imprescindible in ["vasakos-desktop", "linux", "linux-headers", "noto-fonts"] {
             assert!(
                 paquetes.iter().any(|p| p == imprescindible),
                 "falta {imprescindible} en paquetes.txt"
@@ -859,6 +867,42 @@ zsh";
             c["services"].as_array().unwrap().len(),
             SERVICIOS.len(),
             "sin complementos los servicios son sólo los fijos"
+        );
+    }
+
+    /// Sin `systemd-resolved` habilitado, una VPN se conecta y no cambia el DNS.
+    ///
+    /// El escritorio instala `systemd-resolvconf`, que es el puente para que algo
+    /// que llame a `resolvconf` —openvpn, vpnc, el plugin de NetworkManager— le
+    /// hable a `systemd-resolved`. Si el servicio no queda habilitado, ese puente
+    /// no lleva a ninguna parte: el `resolvconf` que se ejecuta no tiene con quién
+    /// hablar, y los nombres de la red remota no resuelven.
+    #[test]
+    fn systemd_resolved_queda_habilitado() {
+        let c = config(false);
+        let servicios: Vec<&str> = c["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert!(servicios.contains(&"systemd-resolved"), "{servicios:?}");
+    }
+
+    /// La fuente de base se nombra como objetivo, y por eso deja de elegirla pacman.
+    ///
+    /// `ttf-font` es una dependencia virtual —la tiene Firefox— con once
+    /// proveedores. pacman la satisface buscando primero entre los paquetes que
+    /// se le pidieron **como objetivo**; las dependencias de un objetivo no
+    /// cuentan, así que `noto-fonts` metido dentro de `vasakos-desktop` no
+    /// alcanzaba y pacman elegía solo: en una raíz vacía instalaba
+    /// `gnu-free-fonts`, que no eligió nadie.
+    #[test]
+    fn la_fuente_de_base_va_como_paquete_pedido() {
+        let paquetes = leer_paquetes(include_str!("../paquetes.txt"));
+        assert!(
+            paquetes.iter().any(|p| p == "noto-fonts"),
+            "sin esto, la fuente que satisface `ttf-font` la elige pacman: {paquetes:?}"
         );
     }
 
