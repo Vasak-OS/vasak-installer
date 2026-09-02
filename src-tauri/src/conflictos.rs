@@ -266,13 +266,72 @@ pub fn revisar(paquetes: &[String], dir: &Path) -> Result<Vec<Choque>, String> {
     let _ = std::fs::remove_dir_all(&raiz);
     std::fs::create_dir_all(&db).map_err(|e| format!("no se pudo crear {}: {e}", db.display()))?;
 
-    let nombres = resolver(paquetes, &raiz, &db)?;
+    let veredicto = veredicto(paquetes, &raiz, &db);
+
+    // La raíz de prueba se borra pase lo que pase, y no sólo al entrar. Las
+    // bases de los repositorios que `resolver` sincroniza adentro son decenas de
+    // MiB, y `dir` es `/run/vasak-installer`: en el medio vivo eso es tmpfs, o
+    // sea RAM, que quedaría ocupada durante toda la instalación para nada.
+    let _ = std::fs::remove_dir_all(&raiz);
+
+    veredicto
+}
+
+/// El trabajo de [`revisar`], sin la limpieza.
+///
+/// Separado para que la raíz de prueba se borre por los dos caminos sin repetir
+/// el borrado en cada `return`.
+fn veredicto(paquetes: &[String], raiz: &Path, db: &Path) -> Result<Vec<Choque>, String> {
+    let nombres = resolver(paquetes, raiz, db)?;
     if nombres.is_empty() {
         return Err("pacman no devolvió ningún paquete".into());
     }
 
-    let fichas = describir(&nombres, &db)?;
+    let fichas = describir(&nombres, db)?;
+
+    // **Sin fichas de todos, no hay veredicto.** `describir` ignora el estado de
+    // salida a propósito —`pacman -Si` falla si *algún* nombre no está y aun así
+    // describe los demás— así que un fallo total devuelve una salida vacía. Sin
+    // esto, `choques` no encontraría nada, `revisar` diría `Ok(vec![])` y quien
+    // llama registraría «sin conflictos» y formatearía el disco sin que la
+    // comprobación se haya hecho. Es justo el desenlace que este módulo existe
+    // para evitar, y por eso se exige la lista completa: los nombres salieron de
+    // la resolución de pacman, así que están todos en los repositorios y todos
+    // tienen que poder describirse.
+    let faltan = faltantes(&nombres, &fichas);
+    if !faltan.is_empty() {
+        return Err(format!(
+            "pacman describió {} de {} paquetes; falta {}",
+            nombres.len() - faltan.len(),
+            nombres.len(),
+            muestra(&faltan)
+        ));
+    }
+
     Ok(choques(&fichas))
+}
+
+/// Los nombres pedidos que la base no describió.
+///
+/// Es la comprobación que separa «no hay conflictos» de «no se pudo comprobar».
+/// Los nombres salen de la resolución de pacman, así que están todos en los
+/// repositorios: uno que no se pueda describir significa que la consulta falló,
+/// no que el paquete sea raro.
+fn faltantes<'n>(nombres: &'n [String], fichas: &[Ficha]) -> Vec<&'n str> {
+    let descritos: BTreeSet<&str> = fichas.iter().map(|f| f.nombre.as_str()).collect();
+    nombres.iter().map(String::as_str).filter(|n| !descritos.contains(n)).collect()
+}
+
+/// Unos pocos nombres para el mensaje, no los seiscientos.
+///
+/// Cuando la consulta falla entera faltan *todos*, y un error con 689 nombres
+/// adentro no se lee: tapa la parte que explica qué pasó.
+fn muestra(nombres: &[&str]) -> String {
+    const TOPE: usize = 5;
+    if nombres.len() <= TOPE {
+        return nombres.join(", ");
+    }
+    format!("{} y {} más", nombres[..TOPE].join(", "), nombres.len() - TOPE)
 }
 
 /// Los nombres de todo lo que se instalaría, dependencias incluidas.
@@ -524,6 +583,55 @@ Replaces        : None
         let b = ficha("otro", &[], &["uno"]);
 
         assert_eq!(choques(&[a, b]).len(), 1);
+    }
+
+    #[test]
+    fn un_paquete_que_la_base_no_describio_no_es_un_veredicto() {
+        // El caso que importa: `describir` ignora el estado de salida a
+        // propósito, así que una base ilegible devuelve vacío. Si eso pasara por
+        // «no hay conflictos», el instalador formatearía el disco anunciando una
+        // comprobación que no se hizo.
+        let nombres = vec!["jack2".to_string(), "pipewire-jack".to_string()];
+
+        assert_eq!(faltantes(&nombres, &[]), vec!["jack2", "pipewire-jack"]);
+        assert_eq!(faltantes(&nombres, &leer_fichas(SALIDA)), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn tambien_se_nota_si_falta_uno_solo() {
+        // Una descripción parcial tampoco alcanza: el que falta podría ser justo
+        // el que choca.
+        let nombres = vec!["jack2".to_string(), "otro".to_string()];
+
+        assert_eq!(faltantes(&nombres, &leer_fichas(SALIDA)), vec!["otro"]);
+    }
+
+    #[test]
+    fn el_mensaje_no_lista_seiscientos_nombres() {
+        // Cuando la consulta falla entera faltan todos, y un error con 689
+        // nombres adentro tapa la parte que explica qué pasó.
+        let muchos: Vec<String> = (0..8).map(|i| format!("p{i}")).collect();
+        let refs: Vec<&str> = muchos.iter().map(String::as_str).collect();
+
+        assert_eq!(muestra(&refs), "p0, p1, p2, p3, p4 y 3 más");
+        assert_eq!(muestra(&refs[..2]), "p0, p1");
+    }
+
+    #[test]
+    fn la_raiz_de_prueba_no_queda_en_el_disco() {
+        // `dir` es /run/vasak-installer, que en el medio vivo es tmpfs: las
+        // bases de los repositorios que se sincronizan adentro serían decenas de
+        // MiB de RAM ocupada durante toda la instalación.
+        //
+        // Se comprueba con un paquete que no existe, así que el camino que se
+        // recorre es el de error — el que se olvidaba de limpiar.
+        let dir = std::env::temp_dir().join(format!("vasak-conflictos-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("crear el directorio de prueba");
+
+        let _ = revisar(&["este-paquete-no-existe-en-ningun-repositorio".to_string()], &dir);
+
+        assert!(!dir.join("resolucion").exists(), "quedó la raíz de prueba");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
