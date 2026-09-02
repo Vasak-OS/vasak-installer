@@ -45,3 +45,21 @@ noto-fonts-extra
 # que no tiene por qué ocupar lugar en la imagen, pero sí es lo que alguien
 # espera encontrar en su terminal recién instalada.
 fastfetch
+
+# LA FUENTE DE BASE
+#
+# `noto-fonts` ya viene con el metapaquete, y sin embargo se nombra acá. No es
+# una repetición al descuido: pacman resuelve `ttf-font` —una dependencia
+# virtual que tienen Firefox y otros navegadores— buscando primero entre los
+# paquetes que se le pidieron **como objetivo**. Las dependencias de un objetivo
+# no cuentan para eso, así que `noto-fonts` metido dentro de `vasakos-desktop`
+# no alcanza, y pacman elegía por su cuenta el primero de once proveedores.
+#
+# Comprobado en una raíz vacía: pedir sólo Firefox instala `gnu-free-fonts`, que
+# no eligió nadie; pidiendo `noto-fonts` como objetivo, usa ése y el otro no
+# aparece.
+#
+# Y es `noto-fonts` porque es la fuente que el escritorio configura de verdad:
+# `gtk-font-name=Noto Sans` en los ajustes de GTK que instala
+# vasak-desktop-settings.
+noto-fonts
