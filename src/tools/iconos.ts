@@ -46,6 +46,21 @@ export const ICONO_PASO_INSTALACION: Record<string, string> = {
 };
 
 /**
+ * El icono de la aplicación: el de la barra de título y el de la entrada del
+ * menú.
+ *
+ * `system-os-installer` y no `system-software-install`: el segundo es el
+ * instalador **de programas** —una tienda de aplicaciones—, y esto instala el
+ * sistema operativo. Los dos existen en el tema y se parecen lo suficiente como
+ * para que la confusión no se note hasta que alguien busca uno de los dos.
+ *
+ * Va acá y no escrito en la plantilla para que lo cubra el test que verifica
+ * contra el tema instalado. La entrada `.desktop` nombra el mismo, pero esa
+ * copia no la puede comprobar este módulo: la comprueba `iconos.test.ts`.
+ */
+export const ICONO_APLICACION = 'system-os-installer';
+
+/**
  * La flecha del desplegable, en el selector buscable.
  *
  * `pan-down` es el nombre que GTK usa para exactamente esta flecha —la de un
@@ -124,6 +139,7 @@ export function todosLosIconos(): string[] {
 		...Object.values(ICONO_EQUIPO),
 		ICONO_HECHO,
 		ICONO_FALLADO,
+		ICONO_APLICACION,
 		ICONO_DESPLEGABLE,
 		iconoDeDisco({ nvme: true, rotacional: false }),
 		iconoDeDisco({ nvme: false, rotacional: true }),

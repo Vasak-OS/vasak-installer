@@ -21,7 +21,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { PASOS } from '../src/stores/instalacion';
-import { ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
+import { ICONO_APLICACION, ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
 
 /**
  * Dónde busca GTK, en el orden en que hereda el tema.
@@ -223,6 +223,29 @@ describe('los iconos que nombra el instalador', () => {
 		if (!hayTema) return;
 		expect(hayVersionAColor('drive-harddisk')).toBe(true);
 		expect(hayVersionAColor('drive-harddisk-solidstate')).toBe(true);
+	});
+
+	/**
+	 * La entrada del menú y la barra de título nombran el mismo icono.
+	 *
+	 * Son dos copias del mismo dato en dos archivos que nadie mira juntos, y ya
+	 * se habían desincronizado: el `.desktop` decía `vasak-installer`, un icono
+	 * que **no existe en ninguna parte** —el paquete no lo instala y el tema no
+	 * lo trae—, así que el instalador aparecía en el menú con el icono genérico
+	 * mientras su propia ventana mostraba otro.
+	 */
+	test('el icono del .desktop es el mismo que usa la aplicación', () => {
+		const entrada = readFileSync('src-tauri/packaging/vasak-installer.desktop', 'utf8');
+		const linea = entrada.split('\n').find((l) => l.startsWith('Icon='));
+
+		expect(linea).toBe(`Icon=${ICONO_APLICACION}`);
+	});
+
+	test('el icono de la aplicación existe a color en el tema', () => {
+		// Va a color y no simbólico: es la identidad de la aplicación, no una
+		// marca de estado. Pedirlo a color sin que exista devuelve `image-missing`.
+		if (!hayTema) return;
+		expect(hayVersionAColor(ICONO_APLICACION)).toBe(true);
 	});
 
 	test('ningún nombre lleva extensión ni ruta', () => {
