@@ -402,7 +402,10 @@ class MarcadoDelEscritorio(unittest.TestCase):
         vasakos.RUTA_EVENTOS = None
         self.eventos = []
         self._progreso = vasakos.progreso
-        vasakos.progreso = lambda paso, estado, fraccion=None, detalle=None: self.eventos.append(
+        # Los dos últimos con guion bajo: son parte de la firma que hay que
+        # respetar —`progreso` se llama con cuatro posicionales— y acá no se
+        # miran. El nombre lo deja dicho y calla a ARG005.
+        vasakos.progreso = lambda paso, estado, _fraccion=None, _detalle=None: self.eventos.append(
             (paso, estado)
         )
 
