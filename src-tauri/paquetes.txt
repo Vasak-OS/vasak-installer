@@ -46,6 +46,33 @@ noto-fonts-extra
 # espera encontrar en su terminal recién instalada.
 fastfetch
 
+# LOS PROVEEDORES QUE ELEGIMOS NOSOTROS
+#
+# Estos tres ya vienen con el metapaquete, y sin embargo se nombran acá. No es
+# repetición al descuido: son los que satisfacen una **dependencia virtual** con
+# más de un proveedor, y pacman resuelve eso buscando primero entre los paquetes
+# pedidos **como objetivo**. Las dependencias de un objetivo no cuentan para esa
+# búsqueda, así que estar dentro de `vasakos-desktop` no alcanza.
+#
+# Cuando ninguno es objetivo, pacman elige por orden de repositorio y después
+# alfabético. Eso ya rompió una instalación:
+#
+#   jack  →  eligió `jack2`, que conflictúa con `pipewire-jack`, y pacstrap
+#            murió con «unresolvable package conflicts detected» **después** de
+#            haber formateado el disco. Comprobado en una raíz vacía: pedir sólo
+#            ffmpeg trae jack2; pidiendo pipewire-jack como objetivo, trae el
+#            que corresponde.
+#
+# `mesa` y `mkinitcpio` hoy se resuelven bien **de casualidad**: `mkinitcpio`
+# está en `core`, que se mira antes que `extra`, y `mesa` le gana por la eme a
+# los siete proveedores de `opengl-driver`, que incluyen los de nvidia. Van
+# fijados igual, porque de eso dependen que el equipo arranque y que la pantalla
+# dibuje: no es algo que deba quedar librado a que nadie publique un paquete que
+# ordene antes.
+mesa
+mkinitcpio
+pipewire-jack
+
 # LA FUENTE DE BASE
 #
 # `noto-fonts` ya viene con el metapaquete, y sin embargo se nombra acá. No es
