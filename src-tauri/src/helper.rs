@@ -61,6 +61,14 @@ const DIR_TRABAJO: &str = "/run/vasak-installer";
 /// instalación de media hora.
 const INTERVALO_EVENTOS: Duration = Duration::from_millis(150);
 
+/// Cuánto se le da a la comprobación de paquetes antes de darla por perdida.
+///
+/// Sincroniza las bases de los repositorios, que son decenas de MiB, así que con
+/// una conexión pobre puede tardar. Pasado el tope se sigue con la base que haya
+/// —y si tampoco alcanza, se avisa y se instala igual—, porque esto es una
+/// comprobación y no un requisito.
+const PLAZO_COMPROBACION: Duration = Duration::from_secs(90);
+
 /// La salida compartida. Escriben el hilo que lee peticiones y el que corre la
 /// instalación, y una línea partida en dos deja el JSON inválido del otro lado.
 type Salida = Arc<Mutex<std::io::Stdout>>;
@@ -539,19 +547,42 @@ fn instalar(
     // sincronizada, sin red— se avisa y se sigue, porque un chequeo roto no
     // puede dejar el instalador sin poder instalar.
     let finales = archconfig::paquetes_finales(&paquetes, &aporte);
-    match conflictos::revisar(&finales, Path::new(DIR_TRABAJO)) {
+    // Se avisa antes de empezar: la comprobación sincroniza las bases de los
+    // repositorios y puede tardar. Sin esta línea, la interfaz no muestra nada
+    // nuevo durante esa espera y el primer aviso de progreso recién sale más
+    // abajo, cuando arranca archinstall.
+    log(
+        salida,
+        Nivel::Info,
+        format!("comprobando que los {} paquetes se puedan instalar juntos…", finales.len()),
+    );
+    let vigilancia = conflictos::Vigilancia {
+        // Con tope y no a ciegas: con un espejo lento o una conexión que se
+        // corta, una espera sin límite acá deja la instalación colgada en el
+        // punto en que todavía no pasó nada, sin explicación.
+        plazo: PLAZO_COMPROBACION,
+        cancelado,
+        // El grupo se publica para que cancelar alcance a pacman también acá.
+        // Antes el botón no interrumpía nada en esta ventana, que es justo
+        // cuando el disco está intacto y cancelar tendría que ser gratis.
+        grupo,
+    };
+    match conflictos::revisar(&finales, Path::new(DIR_TRABAJO), &vigilancia) {
         Ok(choques) if choques.is_empty() => {
-            log(salida, Nivel::Info, format!("{} paquetes, sin conflictos entre ellos", finales.len()));
+            log(salida, Nivel::Info, "los paquetes pueden convivir");
         }
         Ok(choques) => {
             // Con el disco intacto: se puede volver a la pantalla anterior,
             // cambiar la elección y probar de nuevo.
             let detalle: Vec<String> = choques.iter().map(Choque::to_string).collect();
             return Err(format!(
-                "los paquetes elegidos no se pueden instalar juntos, así que no se tocó el disco: {}.                  Suele ser una dependencia virtual con más de un proveedor: hay que nombrar el que                  corresponde en /usr/share/vasak-installer/paquetes.txt",
+                "los paquetes elegidos no se pueden instalar juntos, así que no se tocó el \
+                 disco: {}. Suele ser una dependencia virtual con más de un proveedor: hay que \
+                 nombrar el que corresponde en /usr/share/vasak-installer/paquetes.txt",
                 detalle.join("; ")
             ));
         }
+        Err(motivo) if cancelado.load(Ordering::SeqCst) => return Err(motivo),
         Err(motivo) => {
             log(
                 salida,

@@ -32,8 +32,11 @@
 //! nombre virtual que el otro ocupa. Es la misma regla que aplica pacman.
 
 use std::collections::BTreeSet;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 
 /// Lo que la base de datos dice de un paquete.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +249,92 @@ pub fn choques(fichas: &[Ficha]) -> Vec<Choque> {
     encontrados
 }
 
+/// Cada cuánto se le pregunta al hijo si terminó.
+const SONDEO: Duration = Duration::from_millis(100);
+
+/// Cómo se supervisa cada llamada a pacman.
+///
+/// Sin esto la comprobación era una espera ciega: `pacman -Syp` descarga las
+/// bases de todos los repositorios, y con un espejo lento o una conexión que se
+/// corta no hay tope. Peor, el botón de cancelar no alcanzaba a este proceso
+/// —sólo señala al grupo publicado— así que apretarlo no interrumpía nada
+/// durante toda esa ventana, que es justo cuando el disco todavía está intacto y
+/// cancelar tendría que ser gratis.
+pub struct Vigilancia<'v> {
+    /// Tope de tiempo para cada llamada a pacman.
+    pub plazo: Duration,
+    /// Si se pidió cancelar la instalación.
+    pub cancelado: &'v AtomicBool,
+    /// Dónde publicar el grupo de procesos del hijo, para que quien atiende la
+    /// cancelación pueda alcanzarlo. Se deja en cero al terminar: un grupo que
+    /// ya no existe podría ser el de otro proceso que reutilizó el número.
+    pub grupo: &'v AtomicI32,
+}
+
+/// Corre pacman con tope de tiempo, dejándose cancelar, y devuelve si le fue bien.
+///
+/// **La salida va a archivos y no a tuberías.** `pacman -Si` sobre los 689
+/// paquetes de una instalación imprime 880 KB, muchísimo más de lo que aguanta
+/// el buffer de una tubería, y un bucle que sólo pregunta si el hijo terminó
+/// —sin vaciar esa tubería— deja a los dos procesos esperándose para siempre.
+/// Con archivos el bucle puede sondear tranquilo, y de paso los dos quedan
+/// dentro de la raíz de prueba, que se borra al final.
+fn correr(
+    mut comando: Command,
+    salida_a: &Path,
+    error_a: &Path,
+    vigilancia: &Vigilancia,
+) -> Result<bool, String> {
+    let archivo_salida =
+        std::fs::File::create(salida_a).map_err(|e| format!("no se pudo escribir la salida: {e}"))?;
+    let archivo_error =
+        std::fs::File::create(error_a).map_err(|e| format!("no se pudo escribir el error: {e}"))?;
+
+    comando
+        .stdin(Stdio::null())
+        .stdout(archivo_salida)
+        .stderr(archivo_error)
+        // Su propio grupo, igual que archinstall: pacman puede tener hijos
+        // bajando archivos, y matando sólo al padre seguirían tirando de la red.
+        .process_group(0);
+
+    let mut hijo = comando.spawn().map_err(|e| format!("no se pudo ejecutar pacman: {e}"))?;
+    let grupo = hijo.id() as i32;
+    vigilancia.grupo.store(grupo, Ordering::SeqCst);
+
+    let empezo = Instant::now();
+    let resultado = loop {
+        if vigilancia.cancelado.load(Ordering::SeqCst) {
+            matar(grupo);
+            break Err("la instalación se canceló".to_string());
+        }
+        match hijo.try_wait() {
+            Ok(Some(estado)) => break Ok(estado.success()),
+            Ok(None) => {}
+            Err(e) => break Err(format!("no se pudo esperar a pacman: {e}")),
+        }
+        if empezo.elapsed() >= vigilancia.plazo {
+            matar(grupo);
+            break Err(format!("pacman no contestó en {} s", vigilancia.plazo.as_secs()));
+        }
+        std::thread::sleep(SONDEO);
+    };
+
+    vigilancia.grupo.store(0, Ordering::SeqCst);
+    // Recoge al hijo después de matarlo, para no dejar un zombi.
+    let _ = hijo.wait();
+    resultado
+}
+
+/// Mata al grupo entero.
+fn matar(grupo: i32) {
+    // SEGURIDAD: `kill` recibe dos enteros y no toca memoria. El PID negativo es
+    // la forma documentada de señalar a un grupo entero.
+    unsafe {
+        libc::kill(-grupo, libc::SIGKILL);
+    }
+}
+
 /// Resuelve la lista contra una raíz vacía y devuelve los pares incompatibles.
 ///
 /// `dir` es donde se arma esa raíz: tiene que ser escribible y se deja limpia
@@ -256,7 +345,11 @@ pub fn choques(fichas: &[Ficha]) -> Vec<Choque> {
 /// se cayó la red— y quien lo llama tiene que seguir adelante avisando. Al revés
 /// sería peor que el problema que resuelve: un chequeo roto dejaría el
 /// instalador sin poder instalar nada.
-pub fn revisar(paquetes: &[String], dir: &Path) -> Result<Vec<Choque>, String> {
+pub fn revisar(
+    paquetes: &[String],
+    dir: &Path,
+    vigilancia: &Vigilancia,
+) -> Result<Vec<Choque>, String> {
     if paquetes.is_empty() {
         return Ok(Vec::new());
     }
@@ -266,7 +359,7 @@ pub fn revisar(paquetes: &[String], dir: &Path) -> Result<Vec<Choque>, String> {
     let _ = std::fs::remove_dir_all(&raiz);
     std::fs::create_dir_all(&db).map_err(|e| format!("no se pudo crear {}: {e}", db.display()))?;
 
-    let veredicto = veredicto(paquetes, &raiz, &db);
+    let veredicto = veredicto(paquetes, &raiz, &db, vigilancia);
 
     // La raíz de prueba se borra pase lo que pase, y no sólo al entrar. Las
     // bases de los repositorios que `resolver` sincroniza adentro son decenas de
@@ -281,13 +374,18 @@ pub fn revisar(paquetes: &[String], dir: &Path) -> Result<Vec<Choque>, String> {
 ///
 /// Separado para que la raíz de prueba se borre por los dos caminos sin repetir
 /// el borrado en cada `return`.
-fn veredicto(paquetes: &[String], raiz: &Path, db: &Path) -> Result<Vec<Choque>, String> {
-    let nombres = resolver(paquetes, raiz, db)?;
+fn veredicto(
+    paquetes: &[String],
+    raiz: &Path,
+    db: &Path,
+    vigilancia: &Vigilancia,
+) -> Result<Vec<Choque>, String> {
+    let nombres = resolver(paquetes, raiz, db, vigilancia)?;
     if nombres.is_empty() {
         return Err("pacman no devolvió ningún paquete".into());
     }
 
-    let fichas = describir(&nombres, db)?;
+    let fichas = describir(&nombres, raiz, db, vigilancia)?;
 
     // **Sin fichas de todos, no hay veredicto.** `describir` ignora el estado de
     // salida a propósito —`pacman -Si` falla si *algún* nombre no está y aun así
@@ -340,8 +438,16 @@ fn muestra(nombres: &[&str]) -> String {
 /// `pacstrap`: la del medio vivo es de cuando se armó la imagen, y una lista
 /// vieja daría un veredicto viejo. Si sincronizar no se puede —sin red, sin
 /// privilegios— se cae a copiar la base que haya, que es mejor que no comprobar.
-fn resolver(paquetes: &[String], raiz: &Path, db: &Path) -> Result<Vec<String>, String> {
-    let imprimir = |sincronizar: bool| -> Result<std::process::Output, std::io::Error> {
+fn resolver(
+    paquetes: &[String],
+    raiz: &Path,
+    db: &Path,
+    vigilancia: &Vigilancia,
+) -> Result<Vec<String>, String> {
+    let lista = raiz.join("resueltos.txt");
+    let error = raiz.join("resueltos.err");
+
+    let imprimir = |sincronizar: bool| -> Result<bool, String> {
         let mut comando = Command::new("pacman");
         comando.arg(if sincronizar { "-Syp" } else { "-Sp" });
         comando
@@ -351,25 +457,29 @@ fn resolver(paquetes: &[String], raiz: &Path, db: &Path) -> Result<Vec<String>, 
             .arg("--dbpath")
             .arg(db)
             .arg("--noconfirm")
-            .args(paquetes)
-            .output()
+            .args(paquetes);
+        correr(comando, &lista, &error, vigilancia)
     };
 
-    let salida = match imprimir(true) {
-        Ok(salida) if salida.status.success() => salida,
+    let exitoso = match imprimir(true) {
+        Ok(true) => true,
+        // Una cancelación no se reintenta: se pidió parar, no otra vía.
+        Err(motivo) if vigilancia.cancelado.load(Ordering::SeqCst) => return Err(motivo),
         _ => {
             copiar_base(db)?;
-            imprimir(false).map_err(|e| format!("no se pudo ejecutar pacman: {e}"))?
+            imprimir(false)?
         }
     };
 
-    if !salida.status.success() {
+    if !exitoso {
         // El error de pacman importa tal cual: si la lista ya es irresoluble por
         // otro motivo —un paquete que no existe— eso es lo que hay que decir.
-        return Err(String::from_utf8_lossy(&salida.stderr).trim().to_string());
+        let texto = std::fs::read_to_string(&error).unwrap_or_default();
+        return Err(texto.trim().to_string());
     }
 
-    Ok(String::from_utf8_lossy(&salida.stdout)
+    Ok(std::fs::read_to_string(&lista)
+        .map_err(|e| format!("no se pudo leer la lista resuelta: {e}"))?
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
@@ -401,28 +511,47 @@ fn copiar_base(db: &Path) -> Result<(), String> {
 }
 
 /// Le pregunta a la base qué ocupa y con qué choca cada paquete.
-fn describir(nombres: &[String], db: &Path) -> Result<Vec<Ficha>, String> {
-    let salida = Command::new("pacman")
+fn describir(
+    nombres: &[String],
+    raiz: &Path,
+    db: &Path,
+    vigilancia: &Vigilancia,
+) -> Result<Vec<Ficha>, String> {
+    let descripcion = raiz.join("descripcion.txt");
+    let error = raiz.join("descripcion.err");
+
+    let mut comando = Command::new("pacman");
+    comando
         .arg("-Si")
         .arg("--dbpath")
         .arg(db)
         .args(nombres)
         // El idioma se fija acá: los nombres de los campos están traducidos, y
         // el analizador lee los de inglés.
-        .env("LC_ALL", "C")
-        .output()
-        .map_err(|e| format!("no se pudo ejecutar pacman -Si: {e}"))?;
+        .env("LC_ALL", "C");
 
-    // Sin comprobar el estado a propósito: `pacman -Si` sale con error si **algún**
-    // nombre no está en los repositorios, y aun así imprime todos los demás. Un
-    // nombre que no aparece no puede chocar con nada, así que se sigue con lo que
-    // sí describió.
-    Ok(leer_fichas(&String::from_utf8_lossy(&salida.stdout)))
+    // El estado de salida no se mira a propósito: `pacman -Si` sale con error si
+    // **algún** nombre no está en los repositorios, y aun así imprime todos los
+    // demás. Lo que decide si la consulta sirvió es que estén descritos todos los
+    // nombres, y eso lo comprueba `veredicto` con `faltantes`.
+    correr(comando, &descripcion, &error, vigilancia)?;
+
+    let texto = std::fs::read_to_string(&descripcion)
+        .map_err(|e| format!("no se pudo leer la descripción: {e}"))?;
+    Ok(leer_fichas(&texto))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Una vigilancia para los tests: plazo corto, sin cancelación pedida.
+    ///
+    /// Devuelve también los dos átomos, porque `Vigilancia` los presta y tienen
+    /// que vivir tanto como ella.
+    fn vigilancia() -> (Box<AtomicBool>, Box<AtomicI32>) {
+        (Box::new(AtomicBool::new(false)), Box::new(AtomicI32::new(0)))
+    }
 
     fn ficha(nombre: &str, provee: &[&str], conflictos: &[&str]) -> Ficha {
         Ficha {
@@ -628,9 +757,37 @@ Replaces        : None
         let dir = std::env::temp_dir().join(format!("vasak-conflictos-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("crear el directorio de prueba");
 
-        let _ = revisar(&["este-paquete-no-existe-en-ningun-repositorio".to_string()], &dir);
+        let (cancelado, grupo) = vigilancia();
+        let v = Vigilancia { plazo: Duration::from_secs(30), cancelado: &cancelado, grupo: &grupo };
+        let _ = revisar(&["este-paquete-no-existe-en-ningun-repositorio".to_string()], &dir, &v);
 
         assert!(!dir.join("resolucion").exists(), "quedó la raíz de prueba");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn una_cancelacion_corta_la_comprobacion_enseguida() {
+        // El botón de cancelar está a la vista durante toda esta ventana, y
+        // apretarlo no interrumpía nada: la comprobación seguía sincronizando
+        // las bases hasta terminar. Es el peor momento para que un botón mienta,
+        // porque todavía no se tocó el disco.
+        let dir = std::env::temp_dir().join(format!("vasak-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("crear el directorio de prueba");
+
+        let (cancelado, grupo) = vigilancia();
+        cancelado.store(true, Ordering::SeqCst);
+        let v = Vigilancia { plazo: Duration::from_secs(60), cancelado: &cancelado, grupo: &grupo };
+
+        let empezo = Instant::now();
+        let resultado = revisar(&["vasakos-desktop".to_string()], &dir, &v);
+
+        assert!(resultado.is_err(), "una cancelación no puede dar un veredicto");
+        // Sin esperar los 60 s del plazo ni lo que tarde la sincronización.
+        assert!(empezo.elapsed() < Duration::from_secs(10), "tardó {:?}", empezo.elapsed());
+        // Y el grupo queda en cero: un número que ya no es de nadie podría ser
+        // el de otro proceso que reutilizó el pid.
+        assert_eq!(grupo.load(Ordering::SeqCst), 0);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -639,7 +796,10 @@ Replaces        : None
         // Y no se arma ninguna raíz de prueba: el directorio no existe, así que
         // si intentara crearla, esto fallaría.
         let inexistente = Path::new("/no/existe/este/directorio");
-        assert_eq!(revisar(&[], inexistente), Ok(Vec::new()));
+        let (cancelado, grupo) = vigilancia();
+        let v = Vigilancia { plazo: Duration::from_secs(1), cancelado: &cancelado, grupo: &grupo };
+
+        assert_eq!(revisar(&[], inexistente, &v), Ok(Vec::new()));
     }
 
     #[test]
