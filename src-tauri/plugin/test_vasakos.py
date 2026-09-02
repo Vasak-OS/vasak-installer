@@ -389,6 +389,73 @@ class PasosDelProtocolo(unittest.TestCase):
         self.assertIs(vasakos.on_add_bootloader(None), False)
 
 
+class MarcadoDelEscritorio(unittest.TestCase):
+    """Cuándo la interfaz puede decir que el escritorio está instalado.
+
+    Decía «hecho» desde `on_mkinitcpio`, que corre dentro de
+    `minimal_installation()`: tres pasos antes de que `add_additional_packages()`
+    instalara el escritorio. La barra mentía, y en la misma dirección en que
+    mentía el código que causó la pantalla negra.
+    """
+
+    def setUp(self):
+        vasakos.RUTA_EVENTOS = None
+        self.eventos = []
+        self._progreso = vasakos.progreso
+        # Los dos últimos con guion bajo: son parte de la firma que hay que
+        # respetar —`progreso` se llama con cuatro posicionales— y acá no se
+        # miran. El nombre lo deja dicho y calla a ARG005.
+        vasakos.progreso = lambda paso, estado, _fraccion=None, _detalle=None: self.eventos.append(
+            (paso, estado)
+        )
+
+    def tearDown(self):
+        vasakos.progreso = self._progreso
+
+    def test_el_pacstrap_del_sistema_base_no_abre_el_escritorio(self):
+        # Son dos pacstrap y sólo el segundo trae el metapaquete.
+        vasakos.on_pacstrap(["base", "linux", "linux-firmware"])
+
+        self.assertEqual(self.eventos, [])
+
+    def test_el_pacstrap_de_los_paquetes_elegidos_si(self):
+        vasakos.on_pacstrap(["fastfetch", "firefox", vasakos.METAPAQUETE])
+
+        self.assertIn((vasakos.ESCRITORIO, "en_curso"), self.eventos)
+
+    def test_sin_lista_no_hace_nada(self):
+        vasakos.on_pacstrap(None)
+        vasakos.on_pacstrap([])
+
+        self.assertEqual(self.eventos, [])
+
+    def test_no_devuelve_nada_para_no_reemplazar_la_lista_de_paquetes(self):
+        """El retorno de este gancho **cambia lo que se instala**.
+
+            if result := plugin.on_pacstrap(packages):
+                packages = result
+
+        Devolver la propia lista sería inofensivo de casualidad; devolver un
+        `True` instalaría el paquete llamado «True». Con `None` queda intacta.
+        """
+        paquetes = [vasakos.METAPAQUETE]
+
+        self.assertIsNone(vasakos.on_pacstrap(paquetes))
+        self.assertIsNone(vasakos.Plugin().on_pacstrap(paquetes))
+
+    def test_el_initramfs_ya_no_lo_marca_como_hecho(self):
+        vasakos.on_mkinitcpio(None)
+
+        self.assertNotIn((vasakos.ESCRITORIO, "hecho"), self.eventos)
+
+    def test_lo_cierra_el_ultimo_gancho(self):
+        # Sin `installation`, los ajustes no corren —no hay destino— pero el
+        # marcado de progreso sí, que es lo que se mira acá.
+        vasakos.on_genfstab(None)
+
+        self.assertIn((vasakos.ESCRITORIO, "hecho"), self.eventos)
+
+
 class ConfiguracionDeLasCuentas(unittest.TestCase):
     """Que cada cuenta reciba lo que `/etc/skel` trae.
 
@@ -499,7 +566,7 @@ class ConfiguracionDeLasCuentas(unittest.TestCase):
         shutil.rmtree(self.raiz / "home")
         vasakos._sembrar_skel(self.raiz)  # no levanta
 
-    def test_el_sembrado_esta_en_el_flujo_de_on_install(self):
+    def test_el_sembrado_esta_en_el_flujo_de_los_ajustes(self):
         """Que no quede implementado y sin llamarse.
 
         Es el mismo agujero que tuvo la clase `Plugin`: código correcto que nadie
@@ -508,11 +575,11 @@ class ConfiguracionDeLasCuentas(unittest.TestCase):
         """
         import inspect
 
-        fuente = inspect.getsource(vasakos.on_install)
+        fuente = inspect.getsource(vasakos._aplicar_ajustes)
         self.assertIn(
             "_sembrar_skel",
             fuente,
-            "_sembrar_skel no está en la lista de ajustes de on_install",
+            "_sembrar_skel no está en la lista de ajustes",
         )
 
     def test_un_archivo_suelto_en_home_no_es_una_cuenta(self):
@@ -585,14 +652,14 @@ class NombreEnElMenuDeArranque(unittest.TestCase):
 
         self.assertEqual(self.inst.ordenes, [])
 
-    def test_esta_en_el_flujo_de_on_install(self):
+    def test_esta_en_el_flujo_de_los_ajustes(self):
         import inspect
 
-        fuente = inspect.getsource(vasakos.on_install)
+        fuente = inspect.getsource(vasakos._aplicar_ajustes)
         self.assertIn(
             "_rehacer_grub",
             fuente,
-            "_rehacer_grub no está en la lista de ajustes de on_install",
+            "_rehacer_grub no está en la lista de ajustes",
         )
 
 
@@ -611,6 +678,50 @@ class ContratoConArchinstall(unittest.TestCase):
     progreso, sin limpieza del medio live, sin verificar el repositorio. Nada
     de eso falla de forma visible.
     """
+
+    def test_los_ajustes_cuelgan_del_ultimo_gancho_y_no_de_on_install(self):
+        """El orden de archinstall, fijado como test porque costó dos instalaciones.
+
+        `on_install` se llama al final de `minimal_installation()`, que en
+        `guided.py` es la línea 103. La cuenta se crea en la 136 y
+        `vasakos-desktop` —que trae `/etc/skel`, el `grub.d` propio y el hook
+        que escribe la configuración de greetd— se instala en la 146.
+
+        O sea que los ajustes en `on_install` corrían sobre un destino donde no
+        existía ni el `$HOME` ni ninguno de los archivos que tocan. **Y no
+        fallaban**: sembrar un skel vacío en un home que no está no levanta
+        ninguna excepción. El síntoma aparecía en el primer inicio de sesión,
+        con una pantalla negra, dos pasos después de que la instalación dijera
+        que había terminado bien.
+
+        `genfstab()` es la última cosa de `guided.py` (línea 184) y se llama una
+        sola vez, así que su gancho es el único lugar donde el destino está
+        completo y todavía montado.
+        """
+        import inspect
+
+        self.assertFalse(
+            hasattr(vasakos, "on_install"),
+            "on_install corre antes de que exista la cuenta: los ajustes no van ahí",
+        )
+        self.assertFalse(
+            hasattr(vasakos.Plugin(), "on_install"),
+            "mientras el método exista, archinstall lo va a llamar temprano",
+        )
+        self.assertIn(
+            "_aplicar_ajustes",
+            inspect.getsource(vasakos.on_genfstab),
+            "los ajustes tienen que colgar de on_genfstab",
+        )
+
+    def test_el_ultimo_gancho_no_devuelve_nada_verdadero(self):
+        """archinstall corta el bucle de plugins con un `True`.
+
+        `if plugin.on_genfstab(self) is True: break`. Hoy somos el único plugin,
+        pero devolver algo verdadero por descuido dejaría a otro sin correr.
+        """
+        plugin = vasakos.Plugin()
+        self.assertIsNot(plugin.on_genfstab(None), True)
 
     def test_declara_la_version_de_archinstall_como_numero(self):
         # Se compara con `<` contra un float, así que una cadena revienta con
@@ -647,6 +758,9 @@ class ContratoConArchinstall(unittest.TestCase):
             ("on_mirrors", (None,)),
             ("on_genfstab", (instalacion,)),
             ("on_mkinitcpio", (instalacion,)),
+            # Un argumento: la lista de paquetes. `plugin.on_pacstrap(packages)`
+            # en lib/pacman/pacman.py.
+            ("on_pacstrap", (None,)),
             ("on_add_bootloader", (instalacion,)),
             ("on_user_create", (instalacion, None)),
             ("on_user_created", (instalacion, None)),
