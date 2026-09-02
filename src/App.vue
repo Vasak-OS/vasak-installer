@@ -7,7 +7,6 @@ import type { Store } from 'pinia';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
-import { ICONO_APLICACION } from '@/tools/iconos';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -16,6 +15,7 @@ import {
 	type ProgresoPaso,
 	useInstalacionStore,
 } from '@/stores/instalacion';
+import { ICONO_APLICACION } from '@/tools/iconos';
 import BienvenidaView from '@/views/BienvenidaView.vue';
 import ComplementosView from '@/views/ComplementosView.vue';
 import CuentaView from '@/views/CuentaView.vue';
