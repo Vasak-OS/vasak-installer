@@ -73,14 +73,22 @@ quieta sin ningún error visible.
 
 Por eso el instalador envía **su propio plugin de archinstall**
 (`src-tauri/plugin/vasakos.py`). archinstall define ganchos `on_mirrors`,
-`on_genfstab`, `on_mkinitcpio`, `on_add_bootloader`, `on_user_created`,
-`on_install`… que se llaman en los puntos donde arranca cada etapa real. El
-plugin escribe NDJSON en un archivo que el ayudante sigue como un `tail -f`, y de
-ahí salen los pasos de la interfaz.
+`on_mkinitcpio`, `on_add_bootloader`, `on_user_created`, `on_genfstab`… que se
+llaman en los puntos donde arranca cada etapa real. El plugin escribe NDJSON en
+un archivo que el ayudante sigue como un `tail -f`, y de ahí salen los pasos de
+la interfaz.
 
 El mismo plugin es donde va **la post-configuración de VasakOS**. La alternativa
 era `custom_commands` en el JSON: quince cadenas de shell sin tests, sin manejo de
 errores y sin forma de saber cuál de las quince falló.
+
+Y va en **`on_genfstab`**, que es el último que corre. No en `on_install`, que
+es el que uno elegiría por el nombre: archinstall lo llama al final de
+`minimal_installation()` —línea 103 de `guided.py`— y la cuenta se crea en la
+136, `vasakos-desktop` se instala en la 146 y `genfstab()` es la 184. Ahí es el
+único momento en que el destino está completo y todavía montado. Elegir mal ese
+gancho da una instalación que termina bien y no arranca, sin ningún error: los
+ajustes corren sobre archivos que no existen todavía y no fallan.
 
 Se escribe en un archivo y no en la salida estándar porque ahí escriben también
 pacman, `mkinitcpio` y todo lo que archinstall invoca: una línea de JSON partida

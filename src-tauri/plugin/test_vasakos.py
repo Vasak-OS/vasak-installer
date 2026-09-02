@@ -499,7 +499,7 @@ class ConfiguracionDeLasCuentas(unittest.TestCase):
         shutil.rmtree(self.raiz / "home")
         vasakos._sembrar_skel(self.raiz)  # no levanta
 
-    def test_el_sembrado_esta_en_el_flujo_de_on_install(self):
+    def test_el_sembrado_esta_en_el_flujo_de_los_ajustes(self):
         """Que no quede implementado y sin llamarse.
 
         Es el mismo agujero que tuvo la clase `Plugin`: código correcto que nadie
@@ -508,11 +508,11 @@ class ConfiguracionDeLasCuentas(unittest.TestCase):
         """
         import inspect
 
-        fuente = inspect.getsource(vasakos.on_install)
+        fuente = inspect.getsource(vasakos._aplicar_ajustes)
         self.assertIn(
             "_sembrar_skel",
             fuente,
-            "_sembrar_skel no está en la lista de ajustes de on_install",
+            "_sembrar_skel no está en la lista de ajustes",
         )
 
     def test_un_archivo_suelto_en_home_no_es_una_cuenta(self):
@@ -585,14 +585,14 @@ class NombreEnElMenuDeArranque(unittest.TestCase):
 
         self.assertEqual(self.inst.ordenes, [])
 
-    def test_esta_en_el_flujo_de_on_install(self):
+    def test_esta_en_el_flujo_de_los_ajustes(self):
         import inspect
 
-        fuente = inspect.getsource(vasakos.on_install)
+        fuente = inspect.getsource(vasakos._aplicar_ajustes)
         self.assertIn(
             "_rehacer_grub",
             fuente,
-            "_rehacer_grub no está en la lista de ajustes de on_install",
+            "_rehacer_grub no está en la lista de ajustes",
         )
 
 
@@ -611,6 +611,50 @@ class ContratoConArchinstall(unittest.TestCase):
     progreso, sin limpieza del medio live, sin verificar el repositorio. Nada
     de eso falla de forma visible.
     """
+
+    def test_los_ajustes_cuelgan_del_ultimo_gancho_y_no_de_on_install(self):
+        """El orden de archinstall, fijado como test porque costó dos instalaciones.
+
+        `on_install` se llama al final de `minimal_installation()`, que en
+        `guided.py` es la línea 103. La cuenta se crea en la 136 y
+        `vasakos-desktop` —que trae `/etc/skel`, el `grub.d` propio y el hook
+        que escribe la configuración de greetd— se instala en la 146.
+
+        O sea que los ajustes en `on_install` corrían sobre un destino donde no
+        existía ni el `$HOME` ni ninguno de los archivos que tocan. **Y no
+        fallaban**: sembrar un skel vacío en un home que no está no levanta
+        ninguna excepción. El síntoma aparecía en el primer inicio de sesión,
+        con una pantalla negra, dos pasos después de que la instalación dijera
+        que había terminado bien.
+
+        `genfstab()` es la última cosa de `guided.py` (línea 184) y se llama una
+        sola vez, así que su gancho es el único lugar donde el destino está
+        completo y todavía montado.
+        """
+        import inspect
+
+        self.assertFalse(
+            hasattr(vasakos, "on_install"),
+            "on_install corre antes de que exista la cuenta: los ajustes no van ahí",
+        )
+        self.assertFalse(
+            hasattr(vasakos.Plugin(), "on_install"),
+            "mientras el método exista, archinstall lo va a llamar temprano",
+        )
+        self.assertIn(
+            "_aplicar_ajustes",
+            inspect.getsource(vasakos.on_genfstab),
+            "los ajustes tienen que colgar de on_genfstab",
+        )
+
+    def test_el_ultimo_gancho_no_devuelve_nada_verdadero(self):
+        """archinstall corta el bucle de plugins con un `True`.
+
+        `if plugin.on_genfstab(self) is True: break`. Hoy somos el único plugin,
+        pero devolver algo verdadero por descuido dejaría a otro sin correr.
+        """
+        plugin = vasakos.Plugin()
+        self.assertIsNot(plugin.on_genfstab(None), True)
 
     def test_declara_la_version_de_archinstall_como_numero(self):
         # Se compara con `<` contra un float, así que una cadena revienta con

@@ -149,16 +149,54 @@ def on_mirrors(mirrors=None):
     empezar(SISTEMA_BASE)
 
 
-def on_genfstab(installation=None):
-    """El fstab está escrito: el sistema base terminó de instalarse."""
+def on_genfstab(installation=None, *_args, **_kwargs):
+    """El último gancho de archinstall, y el único con el destino completo.
+
+    Acá van todos los ajustes propios de VasakOS. **No en `on_install`**, y esto
+    costó dos instalaciones que terminaban bien y no arrancaban: archinstall
+    llama a `on_install` al final de `minimal_installation()`, y el orden de
+    `guided.py` es
+
+        línea 103:  minimal_installation()      ← ahí corre on_install
+        línea 118:  add_bootloader()
+        línea 136:  create_users()              ← ahí nace la cuenta y su $HOME
+        línea 146:  add_additional_packages()   ← ahí se instala vasakos-desktop
+        línea 184:  genfstab()                  ← ahí corre esto
+
+    En `on_install` no existe todavía ni la cuenta ni casi ninguno de los
+    archivos que estos ajustes tocan: `/etc/skel` lo trae
+    `vasak-desktop-settings`, el `grub.d` propio también, y la configuración de
+    greetd la escribe el hook de `vasak-session-manager` — los tres llegan en la
+    línea 146. Sembrar el skel antes de que exista el home, desde un `/etc/skel`
+    que todavía está vacío, no hace nada **y no falla**: el síntoma aparece
+    recién en el primer inicio de sesión, con una pantalla negra.
+
+    `genfstab()` es la última cosa que hace `guided.py` antes de ofrecer el menú
+    de post-instalación, y se llama una sola vez. Llega después de las cuatro:
+    cuenta creada, paquetes instalados, gestor de arranque puesto, destino
+    todavía montado.
+
+    **No devuelve nada, a propósito.** archinstall corta el bucle de plugins si
+    uno devuelve exactamente `True` —`if plugin.on_genfstab(self) is True:
+    break`— y aunque hoy seamos el único, devolver algo verdadero por accidente
+    dejaría a otro sin correr. El fstab ya está escrito antes de este llamado,
+    así que no hay riesgo de quedarse sin él.
+    """
+    # Los pasos que la interfaz venía mostrando se cierran acá: a esta altura el
+    # sistema base y el escritorio están instalados de verdad.
     terminar(SISTEMA_BASE)
-    empezar(ESCRITORIO)
+    terminar(ESCRITORIO)
+    _aplicar_ajustes(installation)
 
 
 def on_mkinitcpio(installation=None):
     """Se está armando el initramfs."""
-    # Los paquetes ya están: `add_additional_packages()` corre antes de que
-    # `mkinitcpio` se regenere por última vez.
+    # Ojo con lo que se deduce de acá: este gancho corre **dentro** de
+    # `minimal_installation()` (installer.py:978), o sea antes de que existan las
+    # cuentas y antes de `add_additional_packages()`. Los otros dos sitios que
+    # regeneran el initramfs son de plymouth y de UKI, que acá no se usan. Sirve
+    # para mover la barra, no para afirmar que algo ya está instalado — creer eso
+    # es lo que dejó los ajustes de VasakOS corriendo sobre un destino vacío.
     terminar(ESCRITORIO)
     empezar(ARRANQUE, "initramfs")
     # `False` explícito, no `None`: éste es uno de los ganchos que archinstall
@@ -197,11 +235,11 @@ def on_timezone(timezone=None):
     registrar(f"zona horaria {timezone}")
 
 
-def on_install(installation=None, *_args, **_kwargs):
-    """Último gancho: el sistema está instalado y todavía está montado.
+def _aplicar_ajustes(installation):
+    """Los ajustes propios, sobre un destino ya completo.
 
-    Acá va todo lo propio de VasakOS. Es el único momento en que el destino
-    existe completo y sigue montado.
+    Separado de [`on_genfstab`] para que el gancho quede en una línea y esto se
+    pueda leer —y probar— sin el ruido del progreso.
     """
     terminar(CONFIGURACION)
     empezar(VASAKOS)
@@ -846,7 +884,8 @@ class Plugin:
         return on_mirrors(mirrors)
 
     def on_genfstab(self, installation=None):
-        return on_genfstab(installation)
+        # Sin `return`: ver el porqué en `on_genfstab`.
+        on_genfstab(installation)
 
     def on_mkinitcpio(self, installation=None):
         return on_mkinitcpio(installation)
@@ -867,6 +906,3 @@ class Plugin:
 
     def on_timezone(self, timezone=None):
         return on_timezone(timezone)
-
-    def on_install(self, installation=None):
-        return on_install(installation)
