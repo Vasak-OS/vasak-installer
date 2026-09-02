@@ -7,6 +7,7 @@ import type { Store } from 'pinia';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
+import { ICONO_APLICACION } from '@/tools/iconos';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -176,7 +177,7 @@ onUnmounted(() => {
       aparecía en ningún otro lado.
     -->
     <template #identidad>
-      <IconoSistema nombre="system-software-install" tipo="icono" clase="size-5" />
+      <IconoSistema :nombre="ICONO_APLICACION" tipo="icono" clase="size-5" />
     </template>
     <template #titulo>
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
