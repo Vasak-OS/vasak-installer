@@ -889,6 +889,31 @@ zsh";
         assert!(servicios.contains(&"systemd-resolved"), "{servicios:?}");
     }
 
+    /// Los proveedores de dependencias virtuales van nombrados, no elegidos.
+    ///
+    /// pacman resuelve una dependencia virtual buscando primero entre los
+    /// paquetes pedidos **como objetivo**; las dependencias de un objetivo no
+    /// cuentan, así que estar dentro de `vasakos-desktop` no alcanza. Cuando
+    /// ninguno es objetivo elige por orden de repositorio y después alfabético,
+    /// y eso ya rompió una instalación: para `jack` eligió `jack2`, que
+    /// conflictúa con `pipewire-jack`, y pacstrap murió con «unresolvable
+    /// package conflicts» con el disco ya formateado.
+    #[test]
+    fn los_proveedores_virtuales_van_como_paquetes_pedidos() {
+        let paquetes = leer_paquetes(include_str!("../paquetes.txt"));
+        for (proveedor, virtual_) in [
+            ("pipewire-jack", "jack"),
+            ("mkinitcpio", "initramfs"),
+            ("mesa", "opengl-driver"),
+            ("noto-fonts", "ttf-font"),
+        ] {
+            assert!(
+                paquetes.iter().any(|p| p == proveedor),
+                "sin «{proveedor}» pedido, pacman elige solo quién provee «{virtual_}»"
+            );
+        }
+    }
+
     /// La fuente de base se nombra como objetivo, y por eso deja de elegirla pacman.
     ///
     /// `ttf-font` es una dependencia virtual —la tiene Firefox— con once
