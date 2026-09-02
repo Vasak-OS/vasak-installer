@@ -159,6 +159,22 @@ fn particion(p: &ParticionPlaneada, indice: usize, sector_logico: u64) -> Value 
 /// `version` viene de preguntarle a archinstall instalado, no de una constante:
 /// si no coincide con la suya, archinstall avisa que el archivo es de otra
 /// versión, y una constante quedaría vieja en la primera actualización.
+/// La lista de paquetes que recibe archinstall: el escritorio más lo elegido.
+///
+/// Está aparte de [`configuracion`] porque hace falta antes: es lo que se
+/// comprueba —que se pueda instalar junto— mientras el disco está todavía
+/// intacto. Que las dos cosas salgan de la misma función es lo que hace que se
+/// compruebe exactamente lo que se va a instalar.
+///
+/// Sin duplicados y en orden estable. `pacman` no se queja de un paquete
+/// repetido, pero dos instalaciones con la misma elección tienen que producir el
+/// mismo archivo para poder compararlos cuando algo falla.
+pub fn paquetes_finales(paquetes: &[String], aporte: &Aporte) -> Vec<String> {
+    let mut todos: std::collections::BTreeSet<String> = paquetes.iter().cloned().collect();
+    todos.extend(aporte.paquetes.iter().cloned());
+    todos.into_iter().collect()
+}
+
 pub fn configuracion(
     plan: &PlanInstalacion,
     particiones: &[ParticionPlaneada],
@@ -175,11 +191,7 @@ pub fn configuracion(
     // Sin duplicados y en orden estable. `pacman` no se queja de un paquete
     // repetido, pero dos instalaciones con la misma elección tienen que producir
     // el mismo archivo para poder compararlos cuando algo falla.
-    let paquetes_finales: Vec<String> = {
-        let mut todos: std::collections::BTreeSet<String> = paquetes.iter().cloned().collect();
-        todos.extend(aporte.paquetes.iter().cloned());
-        todos.into_iter().collect()
-    };
+    let paquetes_finales = paquetes_finales(paquetes, aporte);
     let servicios_finales: Vec<String> = {
         let mut todos: std::collections::BTreeSet<String> =
             SERVICIOS.iter().map(|s| s.to_string()).collect();

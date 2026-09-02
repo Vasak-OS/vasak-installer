@@ -21,6 +21,7 @@
 pub mod archconfig;
 pub mod commands;
 pub mod complementos;
+pub mod conflictos;
 pub mod hardware;
 pub mod helper;
 pub mod layout;

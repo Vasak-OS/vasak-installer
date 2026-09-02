@@ -36,6 +36,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::archconfig;
+use crate::conflictos::{self, Choque};
 use crate::layout;
 use crate::probe;
 use crate::protocol::{
@@ -525,6 +526,40 @@ fn instalar(
             respaldo
         }
     };
+
+    // ── Que los paquetes se puedan instalar juntos ─────────────────────────
+    //
+    // El último punto en que el disco está intacto. Una instalación murió acá
+    // mismo pero al revés: `pacstrap` descubrió que `jack2` y `pipewire-jack` no
+    // podían convivir **después** de formatear, y lo único que quedaba era
+    // empezar de nuevo. La lista se comprueba resolviéndola contra una raíz
+    // vacía, que es lo mismo que va a hacer pacstrap dentro de un rato.
+    //
+    // Un fallo del chequeo no frena nada: si no se pudo comprobar —sin base
+    // sincronizada, sin red— se avisa y se sigue, porque un chequeo roto no
+    // puede dejar el instalador sin poder instalar.
+    let finales = archconfig::paquetes_finales(&paquetes, &aporte);
+    match conflictos::revisar(&finales, Path::new(DIR_TRABAJO)) {
+        Ok(choques) if choques.is_empty() => {
+            log(salida, Nivel::Info, format!("{} paquetes, sin conflictos entre ellos", finales.len()));
+        }
+        Ok(choques) => {
+            // Con el disco intacto: se puede volver a la pantalla anterior,
+            // cambiar la elección y probar de nuevo.
+            let detalle: Vec<String> = choques.iter().map(Choque::to_string).collect();
+            return Err(format!(
+                "los paquetes elegidos no se pueden instalar juntos, así que no se tocó el disco: {}.                  Suele ser una dependencia virtual con más de un proveedor: hay que nombrar el que                  corresponde en /usr/share/vasak-installer/paquetes.txt",
+                detalle.join("; ")
+            ));
+        }
+        Err(motivo) => {
+            log(
+                salida,
+                Nivel::Warn,
+                format!("no se pudo comprobar si los paquetes conviven ({motivo}); se sigue igual"),
+            );
+        }
+    }
 
     for paso in Paso::TODOS {
         progreso(salida, *paso, EstadoPaso::Pendiente, None, None);
