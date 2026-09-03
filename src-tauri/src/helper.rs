@@ -464,6 +464,33 @@ fn instalar(
             crate::complementos::Aporte::default()
         }
     };
+    // Los paquetes que necesita **esta** máquina y que no van en el metapaquete:
+    // el controlador de vídeo de su fabricante, el firmware de su audio, bluez
+    // si tiene adaptador. Se detecta acá, en el medio vivo, que es el único lugar
+    // donde se puede ver qué ató el kernel — la ISO trae el firmware de todo, así
+    // que lo que anduvo acá es lo que la máquina necesita.
+    let hw = crate::hardware::detectar();
+    let mut necesarios = crate::hardware::necesarios(&hw);
+    // Y las fuentes del idioma elegido, por la misma razón que los
+    // controladores: no es una elección, es lo que hace falta para que el
+    // sistema se pueda leer.
+    if let Some(fuente) = archconfig::paquetes_del_idioma(&plan.idioma_sistema) {
+        necesarios.paquetes.insert(fuente.to_string());
+    }
+    if necesarios.paquetes.is_empty() {
+        log(salida, Nivel::Info, "no se detectó hardware que necesite paquetes propios");
+    } else {
+        log(
+            salida,
+            Nivel::Info,
+            format!(
+                "para este equipo: {} ({})",
+                necesarios.paquetes.iter().cloned().collect::<Vec<_>>().join(", "),
+                hw.marcas.iter().cloned().collect::<Vec<_>>().join(" ")
+            ),
+        );
+    }
+
     if !aporte.paquetes.is_empty() {
         log(
             salida,
@@ -491,8 +518,11 @@ fn instalar(
         &particiones,
         disco.sector_logico,
         firmware,
-        &paquetes,
-        &aporte,
+        &archconfig::FuentesDePaquetes {
+            escritorio: &paquetes,
+            aporte: &aporte,
+            necesarios: &necesarios,
+        },
         version_archinstall().as_deref(),
     );
     let creds = archconfig::credenciales(
@@ -546,7 +576,11 @@ fn instalar(
     // Un fallo del chequeo no frena nada: si no se pudo comprobar —sin base
     // sincronizada, sin red— se avisa y se sigue, porque un chequeo roto no
     // puede dejar el instalador sin poder instalar.
-    let finales = archconfig::paquetes_finales(&paquetes, &aporte);
+    let finales = archconfig::paquetes_finales(&archconfig::FuentesDePaquetes {
+        escritorio: &paquetes,
+        aporte: &aporte,
+        necesarios: &necesarios,
+    });
     // Se avisa antes de empezar: la comprobación sincroniza las bases de los
     // repositorios y puede tardar. Sin esta línea, la interfaz no muestra nada
     // nuevo durante esa espera y el primer aviso de progreso recién sale más

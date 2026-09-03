@@ -308,6 +308,9 @@ complementos:
       descripcion: >-
         El módulo que necesitan algunas placas inalámbricas de Broadcom para
         funcionar.
+    fuentes-cjk:
+      nombre: Fuentes asiáticas
+      descripcion: Chino, japonés y coreano. Sin ellas ese texto se ve con cuadraditos; ocupan 300 MB.
     ofimatica:
       nombre: Oficina
       descripcion: LibreOffice con los diccionarios de español e inglés.

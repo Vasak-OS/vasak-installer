@@ -170,6 +170,21 @@ detectar = "wifi-broadcom"
 # ── Extras ──────────────────────────────────────────────────────────────────
 
 [[complemento]]
+# Los 299 MiB de fuentes de chino, japonés y coreano. Estuvieron en
+# `vasakos-desktop`, donde eran el paquete más grande de todo el escritorio —más
+# que todos los controladores juntos— y los cargaba también quien nunca va a ver
+# un carácter CJK.
+#
+# Sin ellas, ese texto se dibuja con cuadraditos; con ellas, cada instalación
+# paga 299 MiB por si acaso. Como complemento, lo paga quien lo necesita. No
+# viene marcado: la configuración por defecto del escritorio nombra Noto Sans y
+# las nerd fonts, no éstas.
+id = "fuentes-cjk"
+categoria = "extras"
+paquetes = ["noto-fonts-cjk"]
+icono = "preferences-desktop-font"
+
+[[complemento]]
 id = "ofimatica"
 categoria = "extras"
 paquetes = ["libreoffice-fresh", "hunspell", "hunspell-es_ar", "hunspell-en_us"]

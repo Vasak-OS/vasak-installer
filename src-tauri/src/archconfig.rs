@@ -53,7 +53,12 @@ const SERVICIOS: &[&str] = &[
     // la instalación parezca haber funcionado.
     "greetd",
     "NetworkManager",
-    "bluetooth",
+    // `bluetooth` **no** está acá, y sacarlo fue un arreglo y no una limpieza:
+    // el paquete que trae esa unidad lo instala el instalador sólo si detecta un
+    // adaptador, así que en un equipo sin Bluetooth `systemctl enable bluetooth`
+    // no encuentra nada y archinstall lanza `ServiceException` — o sea, la
+    // instalación aborta con el disco ya formateado. Lo aporta
+    // `hardware::necesarios`, junto con su paquete.
     // Hora por red. `timedatectl set-ntp` en el chroot no alcanza: escribe el
     // estado pero el servicio tiene que quedar habilitado para el arranque.
     "systemd-timesyncd",
@@ -169,9 +174,58 @@ fn particion(p: &ParticionPlaneada, indice: usize, sector_logico: u64) -> Value 
 /// Sin duplicados y en orden estable. `pacman` no se queja de un paquete
 /// repetido, pero dos instalaciones con la misma elección tienen que producir el
 /// mismo archivo para poder compararlos cuando algo falla.
-pub fn paquetes_finales(paquetes: &[String], aporte: &Aporte) -> Vec<String> {
-    let mut todos: std::collections::BTreeSet<String> = paquetes.iter().cloned().collect();
-    todos.extend(aporte.paquetes.iter().cloned());
+/// De dónde salen los paquetes que recibe archinstall.
+///
+/// Van juntos en un struct y no como tres argumentos porque son **una sola
+/// pregunta** —qué se instala— contestada desde tres lugares, y porque la
+/// diferencia entre los tres importa: el escritorio es igual en toda máquina, el
+/// aporte es lo que eligió esta persona, y el del hardware es lo que necesita
+/// este equipo.
+pub struct FuentesDePaquetes<'p> {
+    /// El escritorio, tal como lo lista `paquetes.txt`.
+    pub escritorio: &'p [String],
+    /// Los complementos elegidos. Opcionales por diseño.
+    pub aporte: &'p Aporte,
+    /// Lo que esta instalación **necesita**, calculado: los controladores del
+    /// hardware detectado y las fuentes del idioma elegido.
+    ///
+    /// No es opcional y no se pregunta, a diferencia del aporte: sin el firmware
+    /// de su audio la máquina queda muda, y un sistema en japonés sin sus
+    /// fuentes se ve con cuadraditos. Que un fallo instalando esto haga fallar
+    /// la instalación es lo correcto.
+    pub necesarios: &'p crate::hardware::Necesarios,
+}
+
+/// Las fuentes que necesita el idioma elegido para el sistema.
+///
+/// `noto-fonts` cubre casi todos los sistemas de escritura del mundo —del árabe
+/// al devanagari— pero **no** los CJK, que van en su propio paquete por tamaño:
+/// 299 MiB. Por eso salió del metapaquete, donde lo pagaba cada instalación por
+/// si acaso, y por eso vuelve acá cuando de verdad hace falta.
+///
+/// Un sistema en japonés sin esas fuentes arranca perfectamente y muestra
+/// cuadraditos en su propio menú. No es algo que se pregunte: si alguien eligió
+/// japonés, necesita poder leerlo.
+///
+/// Se compara el prefijo del idioma y no la cadena entera porque el catálogo
+/// tiene `ja_JP`, `zh_CN`, `zh_TW`, `zh_HK`, `ko_KR` y más variantes; lo que
+/// decide es la lengua, no el país.
+pub fn paquetes_del_idioma(idioma: &str) -> Option<&'static str> {
+    const CJK: [&str; 3] = ["ja", "zh", "ko"];
+    let lengua = idioma.split(['_', '.', '-']).next().unwrap_or("");
+    CJK.contains(&lengua).then_some("noto-fonts-cjk")
+}
+
+pub fn paquetes_finales(fuentes: &FuentesDePaquetes<'_>) -> Vec<String> {
+    let mut todos: std::collections::BTreeSet<String> = fuentes.escritorio.iter().cloned().collect();
+    todos.extend(fuentes.aporte.paquetes.iter().cloned());
+    // Los del hardware van acá y no entre los complementos, aunque los dos
+    // salgan de la detección. Un complemento es opcional por diseño —el propio
+    // catálogo dice que ninguno puede ser necesario— y el firmware del audio no
+    // es una opción: sin él la máquina queda muda. Yendo con los paquetes del
+    // sistema, un fallo instalándolos hace fallar la instalación, que es lo
+    // correcto para algo sin lo cual el equipo no queda funcionando.
+    todos.extend(fuentes.necesarios.paquetes.iter().cloned());
     todos.into_iter().collect()
 }
 
@@ -180,8 +234,7 @@ pub fn configuracion(
     particiones: &[ParticionPlaneada],
     sector_logico: u64,
     firmware: Firmware,
-    paquetes: &[String],
-    aporte: &Aporte,
+    fuentes: &FuentesDePaquetes<'_>,
     version_archinstall: Option<&str>,
 ) -> Value {
     // Los complementos se funden acá y no en `paquetes.txt`: lo de ahí es el
@@ -191,11 +244,13 @@ pub fn configuracion(
     // Sin duplicados y en orden estable. `pacman` no se queja de un paquete
     // repetido, pero dos instalaciones con la misma elección tienen que producir
     // el mismo archivo para poder compararlos cuando algo falla.
-    let paquetes_finales = paquetes_finales(paquetes, aporte);
+    let paquetes_finales = paquetes_finales(fuentes);
     let servicios_finales: Vec<String> = {
         let mut todos: std::collections::BTreeSet<String> =
             SERVICIOS.iter().map(|s| s.to_string()).collect();
-        todos.extend(aporte.servicios.iter().cloned());
+        todos.extend(fuentes.aporte.servicios.iter().cloned());
+        // Los del hardware: hoy sólo `bluetooth`, y sólo si hay adaptador.
+        todos.extend(fuentes.necesarios.servicios.iter().cloned());
         todos.into_iter().collect()
     };
     let cifrado = particiones.iter().any(|p| p.cifrada);
@@ -472,10 +527,13 @@ mod tests {
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &["base".to_string(), "vasakos-desktop".to_string()],
-            &Aporte {
-                paquetes: vec!["cups".into(), "firefox".into()],
-                servicios: vec!["cups.socket".into()],
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string(), "vasakos-desktop".to_string()],
+                aporte: &Aporte {
+                    paquetes: vec!["cups".into(), "firefox".into()],
+                    servicios: vec!["cups.socket".into()],
+                },
+                necesarios: &Default::default(),
             },
             Some("4.4.0"),
         )
@@ -572,8 +630,11 @@ zsh";
                     &particiones,
                     d.sector_logico,
                     firmware,
-                    &["base".to_string()],
-                    &Aporte::default(),
+                    &FuentesDePaquetes {
+                        escritorio: &["base".to_string()],
+                        aporte: &Aporte::default(),
+                        necesarios: &Default::default(),
+                    },
                     Some("4.4.0"),
                 );
                 let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -609,8 +670,11 @@ zsh";
                     &particiones,
                     d.sector_logico,
                     firmware,
-                    &["base".to_string()],
-                    &Aporte::default(),
+                    &FuentesDePaquetes {
+                        escritorio: &["base".to_string()],
+                        aporte: &Aporte::default(),
+                        necesarios: &Default::default(),
+                    },
                     Some("4.4.0"),
                 );
                 let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -652,8 +716,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Bios,
-            &["base".to_string()],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string()],
+                aporte: &Aporte::default(),
+                necesarios: &Default::default(),
+            },
             Some("4.4.0"),
         );
         let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -730,8 +797,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &[],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &[],
+                aporte: &Aporte::default(),
+                necesarios: &Default::default(),
+            },
             None,
         );
         let esp = &c["disk_config"]["device_modifications"][0]["partitions"][0];
@@ -870,8 +940,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &["base".to_string()],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string()],
+                aporte: &Aporte::default(),
+                necesarios: &Default::default(),
+            },
             None,
         );
         assert_eq!(c["packages"].as_array().unwrap().len(), 1);
@@ -963,5 +1036,96 @@ zsh";
         // haber funcionado: sin él el equipo arranca a una consola de texto.
         assert!(servicios.contains(&"greetd"), "{servicios:?}");
         assert!(servicios.contains(&"NetworkManager"), "{servicios:?}");
+    }
+
+    #[test]
+    fn la_lista_fija_no_habilita_servicios_de_paquetes_condicionales() {
+        // Un servicio de esta lista se habilita en **toda** instalación, y
+        // `enable_service` de archinstall lanza `ServiceException` si la unidad
+        // no existe: la instalación aborta con el disco ya formateado.
+        //
+        // O sea que acá sólo pueden estar los servicios de paquetes que el
+        // escritorio instala siempre. Estos cuatro no lo son —vienen del
+        // hardware detectado o de un complemento— y `bluetooth` estuvo acá hasta
+        // que bluez salió del metapaquete, lo que convirtió a cualquier PC sin
+        // adaptador en una instalación que aborta.
+        for condicional in ["bluetooth", "ModemManager", "smartd", "cups"] {
+            assert!(
+                !SERVICIOS.contains(&condicional),
+                "{condicional} se habilitaría sin garantía de que su paquete esté instalado"
+            );
+        }
+    }
+
+    #[test]
+    fn cada_servicio_fijo_tiene_quien_lo_traiga() {
+        // El otro lado de la regla: la lista no puede crecer sin decir de dónde
+        // sale cada unidad. Los `systemd-*` los trae systemd, que está siempre.
+        let duenos = [
+            "greetd",
+            "NetworkManager",
+            "systemd-timesyncd",
+            "avahi-daemon",
+            "systemd-resolved",
+        ];
+
+        for servicio in SERVICIOS {
+            assert!(
+                duenos.contains(servicio),
+                "servicio sin dueño documentado: {servicio}"
+            );
+        }
+    }
+
+    #[test]
+    fn un_sistema_en_japones_lleva_sus_fuentes() {
+        // Sin esto, alguien que elige japonés instala un sistema que muestra
+        // cuadraditos en su propio menú. Arranca perfecto y no se puede leer.
+        assert_eq!(paquetes_del_idioma("ja_JP.UTF-8"), Some("noto-fonts-cjk"));
+        assert_eq!(paquetes_del_idioma("ko_KR"), Some("noto-fonts-cjk"));
+    }
+
+    #[test]
+    fn las_variantes_de_chino_cuentan_todas() {
+        // El catálogo tiene zh_CN, zh_TW, zh_HK y más: lo que decide es la
+        // lengua y no el país, así que se compara el prefijo.
+        for idioma in ["zh_CN.UTF-8", "zh_TW", "zh_HK.UTF-8", "zh_SG"] {
+            assert_eq!(paquetes_del_idioma(idioma), Some("noto-fonts-cjk"), "{idioma}");
+        }
+    }
+
+    #[test]
+    fn un_sistema_en_espanol_no_carga_299_mib_por_si_acaso() {
+        // Que es lo que hacía el metapaquete.
+        for idioma in ["es_AR.UTF-8", "en_US.UTF-8", "pt_BR", "de_DE.UTF-8", "ar_EG"] {
+            assert_eq!(paquetes_del_idioma(idioma), None, "{idioma}");
+        }
+    }
+
+    #[test]
+    fn un_idioma_vacio_no_agrega_nada() {
+        assert_eq!(paquetes_del_idioma(""), None);
+    }
+
+    #[test]
+    fn lo_necesario_entra_en_la_lista_de_paquetes() {
+        // Lo del hardware y lo del idioma van en la misma lista que el
+        // escritorio, no entre los complementos: un fallo instalándolos tiene
+        // que hacer fallar la instalación.
+        let necesarios = crate::hardware::Necesarios {
+            paquetes: ["sof-firmware".to_string(), "noto-fonts-cjk".to_string()]
+                .into_iter()
+                .collect(),
+            servicios: Default::default(),
+        };
+        let lista = paquetes_finales(&FuentesDePaquetes {
+            escritorio: &["vasakos-desktop".to_string()],
+            aporte: &Aporte::default(),
+            necesarios: &necesarios,
+        });
+
+        assert!(lista.contains(&"sof-firmware".to_string()));
+        assert!(lista.contains(&"noto-fonts-cjk".to_string()));
+        assert!(lista.contains(&"vasakos-desktop".to_string()));
     }
 }
