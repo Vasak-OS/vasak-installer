@@ -794,3 +794,79 @@ class ContratoConArchinstall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApparmorEnElArranque(unittest.TestCase):
+    """Que AppArmor no se apague en silencio si cambia el gestor de arranque.
+
+    El parámetro que lo enciende viaja hoy en un drop-in de
+    `/etc/default/grub.d/`, que sólo lee GRUB. La comprobación mira el resultado
+    —«algo pide AppArmor»— y no el mecanismo, así que sigue sirviendo el día que
+    el gestor sea otro.
+    """
+
+    LSM = "lsm=landlock,lockdown,yama,integrity,bpf,apparmor"
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp(prefix="vsk-apparmor-"))
+        self.eventos_previos = vasakos.RUTA_EVENTOS
+        vasakos.RUTA_EVENTOS = None
+
+    def tearDown(self):
+        vasakos.RUTA_EVENTOS = self.eventos_previos
+        shutil.rmtree(self.raiz, ignore_errors=True)
+
+    def _escribir(self, relativo, contenido):
+        ruta = self.raiz / relativo
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(contenido, encoding="utf-8")
+        return ruta
+
+    def test_con_grub_lo_encuentra(self):
+        self._escribir(
+            "boot/grub/grub.cfg", f"linux /vmlinuz-linux root=UUID=x rw {self.LSM}\n"
+        )
+        vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_con_systemd_boot_tambien(self):
+        # El caso que motiva todo esto: otro gestor, ningún drop-in de GRUB, y
+        # la comprobación tiene que seguir dando por buena la instalación.
+        self._escribir(
+            "boot/loader/entries/vasakos.conf",
+            f"title VasakOS\nlinux /vmlinuz-linux\noptions root=UUID=x rw {self.LSM}\n",
+        )
+        vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_con_una_uki_tambien(self):
+        self._escribir("etc/kernel/cmdline", f"root=UUID=x rw {self.LSM}\n")
+        vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_sin_el_parametro_avisa(self):
+        self._escribir("boot/grub/grub.cfg", "linux /vmlinuz-linux root=UUID=x rw\n")
+        with self.assertRaises(vasakos.ApparmorSinActivar):
+            vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_una_lista_de_lsm_sin_apparmor_no_cuenta(self):
+        # `lsm=` reemplaza la lista entera en vez de agregarle: una línea con
+        # `lsm=` puede perfectamente no encender AppArmor, y ése es justo el
+        # error que sería invisible sin esto.
+        self._escribir(
+            "boot/grub/grub.cfg",
+            "linux /vmlinuz-linux root=UUID=x rw lsm=landlock,lockdown,yama,bpf\n",
+        )
+        with self.assertRaises(vasakos.ApparmorSinActivar):
+            vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_nombrar_apparmor_sin_encenderlo_no_cuenta(self):
+        # El nombre aparece en rutas y comentarios. Si alcanzara con mencionarlo,
+        # la comprobación diría que sí sobre un sistema sin AppArmor.
+        self._escribir(
+            "boot/grub/grub.cfg",
+            "# perfiles en /etc/apparmor.d\nlinux /vmlinuz-linux root=UUID=x rw\n",
+        )
+        with self.assertRaises(vasakos.ApparmorSinActivar):
+            vasakos._verificar_apparmor_en_el_arranque(self.raiz)
+
+    def test_sin_ninguna_config_de_arranque_avisa(self):
+        with self.assertRaises(vasakos.ApparmorSinActivar):
+            vasakos._verificar_apparmor_en_el_arranque(self.raiz)

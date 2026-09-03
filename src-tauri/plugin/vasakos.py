@@ -285,6 +285,8 @@ def _aplicar_ajustes(installation):
         # Con `installation` porque necesita el chroot; las demás sólo miran
         # archivos del destino.
         ("nombre en el menú de arranque", lambda d: _rehacer_grub(d, installation), False),
+        # Va después de regenerar grub.cfg, que es lo que esta comprobación lee.
+        ("AppArmor en la línea de arranque", _verificar_apparmor_en_el_arranque, False),
         ("teclado del escritorio", _configurar_teclado_xkb, False),
         ("limpieza del medio live", _limpiar_rastros_del_live, True),
         ("greeter del sistema instalado", _asegurar_greetd, True),
@@ -531,6 +533,81 @@ CONFIG_DE_SESION = ".config/wayfire.ini"
 
 # El drop-in que le pone el nombre a VasakOS en el menú de arranque.
 DROPIN_GRUB = "etc/default/grub.d/10-vasakos.cfg"
+
+
+# ── AppArmor ────────────────────────────────────────────────────────────────
+
+# Dónde deja cada gestor de arranque la línea de comandos del kernel.
+#
+# Se miran todos y no sólo el de GRUB, a propósito. Hoy el instalador fija
+# `"bootloader": "Grub"` —es el único de los que ofrece archinstall que arranca
+# en BIOS—, y el parámetro que enciende AppArmor viaja en un drop-in de
+# `/etc/default/grub.d/`, que sólo GRUB lee. Si mañana se ofreciera systemd-boot,
+# rEFInd, Limine o una UKI, ese drop-in dejaría de leerse y AppArmor se apagaría
+# **sin que nadie se entere**.
+#
+# Un mecanismo de seguridad que desaparece callado es peor que no tenerlo: nadie
+# lo va a extrañar y el sistema se va a seguir describiendo como si lo tuviera.
+# Por eso esto no comprueba «el drop-in está», que sería comprobar el mecanismo,
+# sino «algo va a pedir AppArmor al arrancar», que es el resultado.
+CONFIGS_DE_ARRANQUE = (
+    "boot/grub/grub.cfg",
+    # systemd-boot: un archivo por entrada.
+    "boot/loader/entries",
+    "boot/refind_linux.conf",
+    "boot/EFI/refind/refind.conf",
+    "boot/limine.conf",
+    # De acá sale la línea de comandos cuando se generan UKIs.
+    "etc/kernel/cmdline",
+)
+
+MODULO_LSM = "apparmor"
+
+# `lsm=` lleva la lista entera separada por comas. Se mira ese valor y no un
+# `"apparmor" in linea` suelto porque el nombre aparece también en rutas y
+# comentarios —`/etc/apparmor.d`, sin ir más lejos—, y ahí la comprobación diría
+# que sí sin que nadie hubiera encendido nada.
+_LSM = re.compile(r"\blsm=([A-Za-z0-9_,-]+)")
+
+
+class ApparmorSinActivar(Exception):
+    pass
+
+
+def _pide_apparmor(texto):
+    """Si algo en ese texto enciende AppArmor al arrancar."""
+    return any(MODULO_LSM in c.group(1).split(",") for c in _LSM.finditer(texto))
+
+
+def _verificar_apparmor_en_el_arranque(destino):
+    """Comprueba que el sistema instalado vaya a arrancar con AppArmor.
+
+    No repara nada: avisa. Un sistema sin AppArmor arranca y funciona igual, así
+    que abortar la instalación por esto sería peor información que un aviso —y
+    el aviso sale en el registro de la interfaz, no en un archivo que no lee
+    nadie—.
+    """
+    for relativo in CONFIGS_DE_ARRANQUE:
+        ruta = destino / relativo
+        if ruta.is_dir():
+            archivos = sorted(h for h in ruta.iterdir() if h.is_file())
+        elif ruta.is_file():
+            archivos = [ruta]
+        else:
+            continue
+        for archivo in archivos:
+            try:
+                contenido = archivo.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _pide_apparmor(contenido):
+                registrar(f"AppArmor va a quedar activo al arrancar (según /{relativo})")
+                return
+
+    raise ApparmorSinActivar(
+        "ningún gestor de arranque pide lsm=...,apparmor: el sistema instalado "
+        "va a arrancar sin AppArmor"
+    )
 
 
 def _rehacer_grub(destino, installation):
