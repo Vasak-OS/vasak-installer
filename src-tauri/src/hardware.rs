@@ -90,6 +90,19 @@ pub struct Hardware {
     pub descripciones: Vec<String>,
 }
 
+/// Lo que esta máquina necesita: paquetes y las unidades que hay que habilitar.
+///
+/// Van **juntos** a propósito. Un servicio se habilita con `systemctl enable` en
+/// el sistema nuevo, y archinstall lanza una excepción si la unidad no existe:
+/// habilitar el servicio de algo que no se instaló no es un aviso, es una
+/// instalación que aborta con el disco ya formateado. Teniéndolos en la misma
+/// estructura, agregar un paquete con servicio obliga a nombrar los dos.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Necesarios {
+    pub paquetes: BTreeSet<String>,
+    pub servicios: BTreeSet<String>,
+}
+
 /// Lee un archivo de `/sys` que contiene un número en hexadecimal con `0x`.
 ///
 /// Devuelve `None` ante cualquier problema en vez de propagar: un dispositivo
@@ -231,8 +244,9 @@ pub fn señales_del_medio(bluetooth: &Path, red: &Path, modulos: &Path) -> BTree
 ///   archinstall, según la elección (`installation_pkg`).
 /// * El controlador propietario de NVIDIA y el módulo de Broadcom: son
 ///   complementos, porque son decisiones y no requisitos.
-pub fn paquetes(hardware: &Hardware) -> BTreeSet<String> {
-    let mut paquetes = BTreeSet::new();
+pub fn necesarios(hardware: &Hardware) -> Necesarios {
+    let mut necesarios = Necesarios::default();
+    let paquetes = &mut necesarios.paquetes;
 
     for marca in &hardware.marcas {
         match marca.as_str() {
@@ -242,9 +256,16 @@ pub fn paquetes(hardware: &Hardware) -> BTreeSet<String> {
             "gpu-intel" => {
                 paquetes.insert("intel-media-driver".to_string());
             }
+            // El paquete **y su servicio**, juntos y en el mismo lugar. La
+            // lista fija de servicios llevaba `bluetooth` siempre, y al sacar
+            // bluez del escritorio eso se volvió una instalación que aborta:
+            // `enable_service` de archinstall lanza `ServiceException` si la
+            // unidad no existe, y a esa altura el disco ya está formateado.
+            // Que el par viaje junto es lo que hace que no se pueda separar.
             "bluetooth" => {
                 paquetes.insert("bluez".to_string());
                 paquetes.insert("bluez-utils".to_string());
+                necesarios.servicios.insert("bluetooth".to_string());
             }
             // La base de datos de regulaciones por país. `wpa_supplicant` no se
             // nombra: lo pide `networkmanager`, que sí es del escritorio.
@@ -258,7 +279,7 @@ pub fn paquetes(hardware: &Hardware) -> BTreeSet<String> {
         }
     }
 
-    paquetes
+    necesarios
 }
 
 pub fn detectar() -> Hardware {
@@ -480,37 +501,40 @@ mod tests {
 
     #[test]
     fn una_maquina_intel_lleva_su_controlador_de_video() {
-        assert!(paquetes(&con_marcas(&["gpu-intel"])).contains("intel-media-driver"));
+        assert!(necesarios(&con_marcas(&["gpu-intel"])).paquetes.contains("intel-media-driver"));
     }
 
     #[test]
     fn una_maquina_amd_no_lleva_nada_de_video() {
         // Su VAAPI viene en `mesa`, que sí es del escritorio. Antes toda máquina
         // AMD cargaba los 41 MiB del controlador de Intel.
-        assert!(paquetes(&con_marcas(&["gpu-amd"])).is_empty());
+        assert_eq!(necesarios(&con_marcas(&["gpu-amd"])), Necesarios::default());
     }
 
     #[test]
     fn una_nvidia_no_agrega_nada_acá() {
         // El propietario es un complemento: es una decisión con consecuencias y
         // se pregunta, no se instala sola.
-        assert!(paquetes(&con_marcas(&["gpu-nvidia"])).is_empty());
+        assert_eq!(necesarios(&con_marcas(&["gpu-nvidia"])), Necesarios::default());
     }
 
     #[test]
     fn el_bluetooth_trae_el_servicio_y_su_herramienta() {
-        let p = paquetes(&con_marcas(&["bluetooth"]));
-        assert!(p.contains("bluez"));
-        assert!(p.contains("bluez-utils"));
+        let n = necesarios(&con_marcas(&["bluetooth"]));
+        assert!(n.paquetes.contains("bluez"));
+        assert!(n.paquetes.contains("bluez-utils"));
+        // Y su unidad, que es la mitad que faltaba: habilitar `bluetooth` sin
+        // instalar bluez hace abortar la instalación.
+        assert!(n.servicios.contains("bluetooth"));
     }
 
     #[test]
     fn el_wifi_no_nombra_wpa_supplicant() {
         // Lo pide `networkmanager`, que es del escritorio: nombrarlo acá sería
         // repetir una dependencia que ya llega.
-        let p = paquetes(&con_marcas(&["wifi"]));
-        assert!(p.contains("wireless-regdb"));
-        assert!(!p.contains("wpa_supplicant"));
+        let n = necesarios(&con_marcas(&["wifi"]));
+        assert!(n.paquetes.contains("wireless-regdb"));
+        assert!(!n.paquetes.contains("wpa_supplicant"));
     }
 
     #[test]
@@ -522,14 +546,50 @@ mod tests {
             "gpu-intel", "gpu-amd", "gpu-nvidia", "bluetooth", "wifi", "audio-sof",
             "wifi-broadcom",
         ]);
-        let p = paquetes(&todas);
+        let n = necesarios(&todas);
         for prohibido in ["amd-ucode", "intel-ucode", "linux-firmware", "base", "mkinitcpio"] {
-            assert!(!p.contains(prohibido), "{prohibido} lo pone archinstall");
+            assert!(!n.paquetes.contains(prohibido), "{prohibido} lo pone archinstall");
+        }
+    }
+
+    #[test]
+    fn ningun_servicio_llega_sin_el_paquete_que_lo_trae() {
+        // La regla que se rompió: la lista fija de servicios llevaba
+        // `bluetooth` siempre, y al sacar bluez del escritorio eso pasó a ser
+        // una instalación que aborta —`enable_service` lanza si la unidad no
+        // existe— con el disco ya formateado.
+        //
+        // Cada servicio que este módulo pide tiene que venir con el paquete que
+        // lo instala, y por eso los dos salen de la misma función.
+        let quien_lo_trae = [("bluetooth", "bluez")];
+
+        for marca in ["gpu-intel", "gpu-amd", "gpu-nvidia", "bluetooth", "wifi", "audio-sof"] {
+            let n = necesarios(&con_marcas(&[marca]));
+            for servicio in &n.servicios {
+                let paquete = quien_lo_trae
+                    .iter()
+                    .find(|(s, _)| s == servicio)
+                    .map(|(_, p)| *p)
+                    .unwrap_or_else(|| panic!("servicio sin dueño conocido: {servicio}"));
+                assert!(
+                    n.paquetes.contains(paquete),
+                    "se habilitaría {servicio} sin instalar {paquete}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sin_bluetooth_no_se_habilita_su_servicio() {
+        // Un PC de escritorio sin adaptador. Antes de esto, la instalación
+        // abortaba en este caso.
+        for marca in ["gpu-amd", "wifi", "audio-sof"] {
+            assert!(necesarios(&con_marcas(&[marca])).servicios.is_empty(), "{marca}");
         }
     }
 
     #[test]
     fn sin_hardware_detectado_no_se_agrega_nada() {
-        assert!(paquetes(&Hardware::default()).is_empty());
+        assert_eq!(necesarios(&Hardware::default()), Necesarios::default());
     }
 }

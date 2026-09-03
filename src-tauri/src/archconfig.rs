@@ -53,7 +53,12 @@ const SERVICIOS: &[&str] = &[
     // la instalación parezca haber funcionado.
     "greetd",
     "NetworkManager",
-    "bluetooth",
+    // `bluetooth` **no** está acá, y sacarlo fue un arreglo y no una limpieza:
+    // el paquete que trae esa unidad lo instala el instalador sólo si detecta un
+    // adaptador, así que en un equipo sin Bluetooth `systemctl enable bluetooth`
+    // no encuentra nada y archinstall lanza `ServiceException` — o sea, la
+    // instalación aborta con el disco ya formateado. Lo aporta
+    // `hardware::necesarios`, junto con su paquete.
     // Hora por red. `timedatectl set-ntp` en el chroot no alcanza: escribe el
     // estado pero el servicio tiene que quedar habilitado para el arranque.
     "systemd-timesyncd",
@@ -188,7 +193,7 @@ pub struct FuentesDePaquetes<'p> {
     /// de su audio la máquina queda muda, y un sistema en japonés sin sus
     /// fuentes se ve con cuadraditos. Que un fallo instalando esto haga fallar
     /// la instalación es lo correcto.
-    pub necesarios: &'p std::collections::BTreeSet<String>,
+    pub necesarios: &'p crate::hardware::Necesarios,
 }
 
 /// Las fuentes que necesita el idioma elegido para el sistema.
@@ -220,7 +225,7 @@ pub fn paquetes_finales(fuentes: &FuentesDePaquetes<'_>) -> Vec<String> {
     // es una opción: sin él la máquina queda muda. Yendo con los paquetes del
     // sistema, un fallo instalándolos hace fallar la instalación, que es lo
     // correcto para algo sin lo cual el equipo no queda funcionando.
-    todos.extend(fuentes.necesarios.iter().cloned());
+    todos.extend(fuentes.necesarios.paquetes.iter().cloned());
     todos.into_iter().collect()
 }
 
@@ -244,6 +249,8 @@ pub fn configuracion(
         let mut todos: std::collections::BTreeSet<String> =
             SERVICIOS.iter().map(|s| s.to_string()).collect();
         todos.extend(fuentes.aporte.servicios.iter().cloned());
+        // Los del hardware: hoy sólo `bluetooth`, y sólo si hay adaptador.
+        todos.extend(fuentes.necesarios.servicios.iter().cloned());
         todos.into_iter().collect()
     };
     let cifrado = particiones.iter().any(|p| p.cifrada);
@@ -1032,6 +1039,45 @@ zsh";
     }
 
     #[test]
+    fn la_lista_fija_no_habilita_servicios_de_paquetes_condicionales() {
+        // Un servicio de esta lista se habilita en **toda** instalación, y
+        // `enable_service` de archinstall lanza `ServiceException` si la unidad
+        // no existe: la instalación aborta con el disco ya formateado.
+        //
+        // O sea que acá sólo pueden estar los servicios de paquetes que el
+        // escritorio instala siempre. Estos cuatro no lo son —vienen del
+        // hardware detectado o de un complemento— y `bluetooth` estuvo acá hasta
+        // que bluez salió del metapaquete, lo que convirtió a cualquier PC sin
+        // adaptador en una instalación que aborta.
+        for condicional in ["bluetooth", "ModemManager", "smartd", "cups"] {
+            assert!(
+                !SERVICIOS.contains(&condicional),
+                "{condicional} se habilitaría sin garantía de que su paquete esté instalado"
+            );
+        }
+    }
+
+    #[test]
+    fn cada_servicio_fijo_tiene_quien_lo_traiga() {
+        // El otro lado de la regla: la lista no puede crecer sin decir de dónde
+        // sale cada unidad. Los `systemd-*` los trae systemd, que está siempre.
+        let duenos = [
+            "greetd",
+            "NetworkManager",
+            "systemd-timesyncd",
+            "avahi-daemon",
+            "systemd-resolved",
+        ];
+
+        for servicio in SERVICIOS {
+            assert!(
+                duenos.contains(servicio),
+                "servicio sin dueño documentado: {servicio}"
+            );
+        }
+    }
+
+    #[test]
     fn un_sistema_en_japones_lleva_sus_fuentes() {
         // Sin esto, alguien que elige japonés instala un sistema que muestra
         // cuadraditos en su propio menú. Arranca perfecto y no se puede leer.
@@ -1066,8 +1112,12 @@ zsh";
         // Lo del hardware y lo del idioma van en la misma lista que el
         // escritorio, no entre los complementos: un fallo instalándolos tiene
         // que hacer fallar la instalación.
-        let necesarios: std::collections::BTreeSet<String> =
-            ["sof-firmware".to_string(), "noto-fonts-cjk".to_string()].into_iter().collect();
+        let necesarios = crate::hardware::Necesarios {
+            paquetes: ["sof-firmware".to_string(), "noto-fonts-cjk".to_string()]
+                .into_iter()
+                .collect(),
+            servicios: Default::default(),
+        };
         let lista = paquetes_finales(&FuentesDePaquetes {
             escritorio: &["vasakos-desktop".to_string()],
             aporte: &Aporte::default(),

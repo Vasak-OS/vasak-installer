@@ -470,14 +470,14 @@ fn instalar(
     // donde se puede ver qué ató el kernel — la ISO trae el firmware de todo, así
     // que lo que anduvo acá es lo que la máquina necesita.
     let hw = crate::hardware::detectar();
-    let mut necesarios = crate::hardware::paquetes(&hw);
+    let mut necesarios = crate::hardware::necesarios(&hw);
     // Y las fuentes del idioma elegido, por la misma razón que los
     // controladores: no es una elección, es lo que hace falta para que el
     // sistema se pueda leer.
     if let Some(fuente) = archconfig::paquetes_del_idioma(&plan.idioma_sistema) {
-        necesarios.insert(fuente.to_string());
+        necesarios.paquetes.insert(fuente.to_string());
     }
-    if necesarios.is_empty() {
+    if necesarios.paquetes.is_empty() {
         log(salida, Nivel::Info, "no se detectó hardware que necesite paquetes propios");
     } else {
         log(
@@ -485,7 +485,7 @@ fn instalar(
             Nivel::Info,
             format!(
                 "para este equipo: {} ({})",
-                necesarios.iter().cloned().collect::<Vec<_>>().join(", "),
+                necesarios.paquetes.iter().cloned().collect::<Vec<_>>().join(", "),
                 hw.marcas.iter().cloned().collect::<Vec<_>>().join(" ")
             ),
         );
