@@ -308,6 +308,9 @@ complementos:
       nombre: Broadcom Wi-Fi
       descripcion: >-
         The module some Broadcom wireless cards need in order to work.
+    fuentes-cjk:
+      nombre: Asian fonts
+      descripcion: Chinese, Japanese and Korean. Without them that text shows as boxes; they take 300 MB.
     ofimatica:
       nombre: Office
       descripcion: LibreOffice with Spanish and English dictionaries.

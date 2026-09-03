@@ -19,7 +19,7 @@
 
 use std::process::Command;
 
-use vasak_installer_lib::archconfig::configuracion;
+use vasak_installer_lib::archconfig::{configuracion, FuentesDePaquetes};
 use vasak_installer_lib::complementos::Aporte;
 use vasak_installer_lib::layout::{planificar, Disco, Firmware};
 use vasak_installer_lib::protocol::{EsquemaDisco, PlanInstalacion, Secretos, SistemaArchivos};
@@ -133,8 +133,14 @@ fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
                     &particiones,
                     d.sector_logico,
                     firmware,
-                    &["base".to_string()],
-                    &Aporte::default(),
+                    &FuentesDePaquetes {
+                        escritorio: &["base".to_string()],
+                        aporte: &Aporte::default(),
+                        // Sin paquetes de hardware: lo que se prueba acá es que
+                        // archinstall acepta el JSON, y los del hardware entran
+                        // en la misma lista que los demás.
+                        del_hardware: &Default::default(),
+                    },
                     Some("4.4.0"),
                 );
 

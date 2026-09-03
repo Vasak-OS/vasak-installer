@@ -169,9 +169,32 @@ fn particion(p: &ParticionPlaneada, indice: usize, sector_logico: u64) -> Value 
 /// Sin duplicados y en orden estable. `pacman` no se queja de un paquete
 /// repetido, pero dos instalaciones con la misma elección tienen que producir el
 /// mismo archivo para poder compararlos cuando algo falla.
-pub fn paquetes_finales(paquetes: &[String], aporte: &Aporte) -> Vec<String> {
-    let mut todos: std::collections::BTreeSet<String> = paquetes.iter().cloned().collect();
-    todos.extend(aporte.paquetes.iter().cloned());
+/// De dónde salen los paquetes que recibe archinstall.
+///
+/// Van juntos en un struct y no como tres argumentos porque son **una sola
+/// pregunta** —qué se instala— contestada desde tres lugares, y porque la
+/// diferencia entre los tres importa: el escritorio es igual en toda máquina, el
+/// aporte es lo que eligió esta persona, y el del hardware es lo que necesita
+/// este equipo.
+pub struct FuentesDePaquetes<'p> {
+    /// El escritorio, tal como lo lista `paquetes.txt`.
+    pub escritorio: &'p [String],
+    /// Los complementos elegidos. Opcionales por diseño.
+    pub aporte: &'p Aporte,
+    /// Lo que pide el hardware detectado. **No** opcional: ver `hardware`.
+    pub del_hardware: &'p std::collections::BTreeSet<String>,
+}
+
+pub fn paquetes_finales(fuentes: &FuentesDePaquetes<'_>) -> Vec<String> {
+    let mut todos: std::collections::BTreeSet<String> = fuentes.escritorio.iter().cloned().collect();
+    todos.extend(fuentes.aporte.paquetes.iter().cloned());
+    // Los del hardware van acá y no entre los complementos, aunque los dos
+    // salgan de la detección. Un complemento es opcional por diseño —el propio
+    // catálogo dice que ninguno puede ser necesario— y el firmware del audio no
+    // es una opción: sin él la máquina queda muda. Yendo con los paquetes del
+    // sistema, un fallo instalándolos hace fallar la instalación, que es lo
+    // correcto para algo sin lo cual el equipo no queda funcionando.
+    todos.extend(fuentes.del_hardware.iter().cloned());
     todos.into_iter().collect()
 }
 
@@ -180,8 +203,7 @@ pub fn configuracion(
     particiones: &[ParticionPlaneada],
     sector_logico: u64,
     firmware: Firmware,
-    paquetes: &[String],
-    aporte: &Aporte,
+    fuentes: &FuentesDePaquetes<'_>,
     version_archinstall: Option<&str>,
 ) -> Value {
     // Los complementos se funden acá y no en `paquetes.txt`: lo de ahí es el
@@ -191,11 +213,11 @@ pub fn configuracion(
     // Sin duplicados y en orden estable. `pacman` no se queja de un paquete
     // repetido, pero dos instalaciones con la misma elección tienen que producir
     // el mismo archivo para poder compararlos cuando algo falla.
-    let paquetes_finales = paquetes_finales(paquetes, aporte);
+    let paquetes_finales = paquetes_finales(fuentes);
     let servicios_finales: Vec<String> = {
         let mut todos: std::collections::BTreeSet<String> =
             SERVICIOS.iter().map(|s| s.to_string()).collect();
-        todos.extend(aporte.servicios.iter().cloned());
+        todos.extend(fuentes.aporte.servicios.iter().cloned());
         todos.into_iter().collect()
     };
     let cifrado = particiones.iter().any(|p| p.cifrada);
@@ -472,10 +494,13 @@ mod tests {
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &["base".to_string(), "vasakos-desktop".to_string()],
-            &Aporte {
-                paquetes: vec!["cups".into(), "firefox".into()],
-                servicios: vec!["cups.socket".into()],
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string(), "vasakos-desktop".to_string()],
+                aporte: &Aporte {
+                    paquetes: vec!["cups".into(), "firefox".into()],
+                    servicios: vec!["cups.socket".into()],
+                },
+                del_hardware: &Default::default(),
             },
             Some("4.4.0"),
         )
@@ -572,8 +597,11 @@ zsh";
                     &particiones,
                     d.sector_logico,
                     firmware,
-                    &["base".to_string()],
-                    &Aporte::default(),
+                    &FuentesDePaquetes {
+                        escritorio: &["base".to_string()],
+                        aporte: &Aporte::default(),
+                        del_hardware: &Default::default(),
+                    },
                     Some("4.4.0"),
                 );
                 let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -609,8 +637,11 @@ zsh";
                     &particiones,
                     d.sector_logico,
                     firmware,
-                    &["base".to_string()],
-                    &Aporte::default(),
+                    &FuentesDePaquetes {
+                        escritorio: &["base".to_string()],
+                        aporte: &Aporte::default(),
+                        del_hardware: &Default::default(),
+                    },
                     Some("4.4.0"),
                 );
                 let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -652,8 +683,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Bios,
-            &["base".to_string()],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string()],
+                aporte: &Aporte::default(),
+                del_hardware: &Default::default(),
+            },
             Some("4.4.0"),
         );
         let del_json = c["disk_config"]["device_modifications"][0]["partitions"]
@@ -730,8 +764,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &[],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &[],
+                aporte: &Aporte::default(),
+                del_hardware: &Default::default(),
+            },
             None,
         );
         let esp = &c["disk_config"]["device_modifications"][0]["partitions"][0];
@@ -870,8 +907,11 @@ zsh";
             &particiones,
             d.sector_logico,
             Firmware::Uefi,
-            &["base".to_string()],
-            &Aporte::default(),
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string()],
+                aporte: &Aporte::default(),
+                del_hardware: &Default::default(),
+            },
             None,
         );
         assert_eq!(c["packages"].as_array().unwrap().len(), 1);
