@@ -139,7 +139,7 @@ fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
                         // Sin paquetes de hardware: lo que se prueba acá es que
                         // archinstall acepta el JSON, y los del hardware entran
                         // en la misma lista que los demás.
-                        del_hardware: &Default::default(),
+                        necesarios: &Default::default(),
                     },
                     Some("4.4.0"),
                 );
