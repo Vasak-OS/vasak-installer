@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import type { Store } from 'pinia';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
@@ -113,10 +112,7 @@ onMounted(async () => {
 	// Importa más acá que en otras: esta es la primera pantalla que alguien ve
 	// del sistema, y si no se parece al escritorio que la rodea, parece ajena.
 	try {
-		const configStore = useConfigStore() as Store<
-			'config',
-			{ config: unknown; loadConfig: () => Promise<void> }
-		>;
+		const configStore = useConfigStore();
 		await configStore.loadConfig();
 		desuscribir.value.push(
 			await listen('config-changed', () => {
