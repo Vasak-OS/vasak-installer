@@ -5,6 +5,7 @@ import I18n from '@vasakgroup/tauri-plugin-i18n';
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from '@/App.vue';
+import { sanearUrl } from '@/tools/csp';
 import '@/assets/main.css';
 
 /**
@@ -16,53 +17,17 @@ import '@/assets/main.css';
  */
 const PLAZO_TRADUCCIONES_MS = 3000;
 
-/**
- * Saca de una URL lo que no debería quedar en un registro.
- *
- * Se conserva el esquema y la autoridad usando `href`, y no `origin + pathname`:
- * para esquemas propios como `asset:` o `ipc:` el `origin` es la cadena «null».
- * Y el `catch` no devuelve el valor tal cual —una ruta relativa dejaría la query
- * en el registro—, sólo pasan los marcadores que informa la especificación.
- */
-const MARCADORES_CSP = new Set([
-	'inline',
-	'eval',
-	'wasm-eval',
-	'data',
-	'blob',
-	'filesystem',
-	'self',
-	'unsafe-eval',
-	'unsafe-inline',
-]);
-
-const sanearUrl = (valor: string | null | undefined): string => {
-	if (!valor) {
-		return '';
-	}
-	try {
-		const url = new URL(valor);
-		if (url.protocol === 'data:') {
-			return 'data:(recortado)';
-		}
-		url.username = '';
-		url.password = '';
-		url.search = '';
-		url.hash = '';
-		return url.href;
-	} catch {
-		if (MARCADORES_CSP.has(valor)) {
-			return valor;
-		}
-		return valor.split(/[?#]/)[0];
-	}
-};
-
 // Una violación de CSP no se ve: el recurso no carga y la interfaz queda a
 // medias sin decir nada. Esto la manda a la consola, saneada.
 document.addEventListener('securitypolicyviolation', (evento) => {
-	const recurso = evento.blockedURI ? sanearUrl(evento.blockedURI) : '(en línea)';
-	const origen = evento.sourceFile ? sanearUrl(evento.sourceFile) : 'documento';
+	// El respaldo va **después** de sanear, no antes.
+	//
+	// Mirando el valor crudo, una entrada como `?token=X` es verdadera y pasa
+	// el respaldo de largo — pero lo que queda de ella al sanearla es nada, así
+	// que el registro salía con el campo en blanco. Sanear primero y decidir
+	// después es lo que hace que un aviso incompleto no exista.
+	const recurso = sanearUrl(evento.blockedURI) || '(en línea)';
+	const origen = sanearUrl(evento.sourceFile) || 'documento';
 	console.error(
 		`[CSP] bloqueado ${recurso} por la directiva ` +
 			`«${evento.violatedDirective}» en ${origen}:${evento.lineNumber}`
