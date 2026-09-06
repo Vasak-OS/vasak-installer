@@ -18,7 +18,7 @@ import ActionControlsComponent from '@/components/topbar/ActionControlsComponent
     mover.
   -->
   <div
-    class="flex shrink-0 items-center gap-2 border-ui-border border-b p-2"
+    class="flex shrink-0 items-center gap-2 border-ui-border border-b p-2 font-title"
     data-tauri-drag-region
   >
     <div class="flex flex-1 items-center gap-2" data-tauri-drag-region>
