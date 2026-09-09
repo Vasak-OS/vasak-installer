@@ -1330,6 +1330,77 @@ mod tests {
         );
     }
 
+    /// **Sobre una partición, en un disco que no tiene ESP.**
+    ///
+    /// Es la rama de `planificar_sobre` que **crea** el ESP, y no la tocaba
+    /// ningún test: todos los discos de prueba ya traían uno. Un disco con un
+    /// Linux viejo en MBR es exactamente este caso.
+    ///
+    /// Lo que importa es que el ESP nuevo caiga en espacio libre: si cayera
+    /// encima de una partición ajena, archinstall lo aceptaría —sólo valida
+    /// solapamientos entre las que crea— y el estropicio se vería en el disco.
+    #[test]
+    fn sobre_una_particion_sin_esp_crea_uno_en_el_hueco() {
+        let mut disco = disco_de(500);
+        let mib = MIB;
+        disco.particiones = vec![
+            // Un `/boot` viejo de 1 GiB al principio.
+            ParticionExistente {
+                ruta: "/dev/sda1".into(),
+                inicio_bytes: mib,
+                tamano_bytes: 1024 * mib,
+                sistema_archivos: Some("ext4".into()),
+                etiqueta: Some("boot".into()),
+                numero: Some(1),
+                tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+                sistema_operativo: None,
+            },
+            // Y la raíz del Linux viejo, que es la que se va a reusar.
+            ParticionExistente {
+                ruta: "/dev/sda2".into(),
+                inicio_bytes: 1025 * mib,
+                tamano_bytes: 100 * 1024 * mib,
+                sistema_archivos: Some("ext4".into()),
+                etiqueta: Some("raiz vieja".into()),
+                numero: Some(2),
+                tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+                sistema_operativo: Some("Debian 12".into()),
+            },
+        ];
+
+        let plan =
+            planificar_sobre(&disco, "/dev/sda2", Firmware::Uefi, SistemaArchivos::Btrfs, false)
+                .unwrap();
+
+        let esp = plan.particiones.iter().find(|p| p.rol == Rol::Esp).unwrap();
+        assert_eq!(esp.accion, Accion::Crear);
+        assert_eq!(esp.ruta, None);
+        assert_eq!(esp.tamano_mib, ARRANQUE_MIB);
+
+        // El ESP nuevo no puede caer encima de nada de lo que ya está.
+        let inicio = esp.inicio_mib * mib;
+        let fin = inicio + esp.tamano_mib * mib;
+        for e in &disco.particiones {
+            assert!(
+                fin <= e.inicio_bytes || inicio >= e.fin_bytes(),
+                "el ESP nuevo [{inicio}, {fin}) pisa {} [{}, {})",
+                e.ruta,
+                e.inicio_bytes,
+                e.fin_bytes()
+            );
+        }
+        assert!(fin <= disco.tamano_bytes - mib, "se mete en la copia del GPT");
+
+        // Y se pierde la raíz vieja, que es lo que se eligió, y sólo eso: el
+        // `/boot` viejo queda intacto aunque ya no sirva para nada.
+        let victimas: Vec<&str> = plan
+            .a_destruir(&disco)
+            .iter()
+            .map(|p| p.ruta.as_str())
+            .collect();
+        assert_eq!(victimas, ["/dev/sda2"]);
+    }
+
     /// **Los dos modos no destructivos tratan el ESP igual.**
     ///
     /// Es lo que hace que reusar el ESP ajeno sea una decisión y no dos. Se
