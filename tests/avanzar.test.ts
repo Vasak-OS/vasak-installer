@@ -27,6 +27,30 @@ function discoDe(ruta: string, enUso = false) {
 	};
 }
 
+/** Un disco que ya tiene un sistema adentro. */
+function conParticiones(ruta: string) {
+	return {
+		...discoDe(ruta),
+		particiones: [
+			{
+				ruta: `${ruta}1`,
+				inicio_bytes: 1024 ** 2,
+				tamano_bytes: 512 * 1024 ** 2,
+				sistema_archivos: 'vfat',
+				etiqueta: 'SYSTEM',
+				numero: 1,
+				tipo_particion: 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b',
+				sistema_operativo: null,
+			},
+		],
+	};
+}
+
+/** Una vista previa cualquiera: lo que importa es que exista. */
+function vistaPreviaDe() {
+	return { firmware: 'uefi', particiones: [], se_pierde: [] };
+}
+
 /** Un almacén con todo completo, para ir rompiéndolo de a un campo. */
 function almacenCompleto() {
 	const store = useInstalacionStore();
@@ -49,6 +73,10 @@ function almacenCompleto() {
 	store.eleccion.hostname = 'vasak';
 	store.secretos.usuario = 'una contraseña';
 	store.secretos.usuarioRepetida = 'una contraseña';
+	// El paso del disco pide además que el plan esté calculado: en la
+	// aplicación lo calcula la propia pantalla, y acá no hay backend al que
+	// preguntarle.
+	store.vistaPrevia = vistaPreviaDe();
 	return store;
 }
 
@@ -312,5 +340,94 @@ describe('el registro', () => {
 		expect(store.registro.length).toBe(500);
 		// Y lo que se conserva es el final, que es donde dice qué falló.
 		expect(store.registro[store.registro.length - 1].linea).toBe('línea 1199');
+	});
+});
+
+describe('el esquema de disco', () => {
+	test('el plan lleva el que se eligió y no uno fijo', () => {
+		// Estuvo escrito a mano como `'borrar_todo'` mientras fue el único. Si
+		// vuelve a quedar fijo, la pantalla ofrecería elegir y el ayudante
+		// borraría el disco igual — que es la peor forma posible de que esto
+		// falle, porque la interfaz diría que no se pierde nada.
+		const store = almacenCompleto();
+		expect(store.armarPlan().esquema).toBe('borrar_todo');
+
+		store.eleccion.esquema = 'junto_a_otro_sistema';
+		expect(store.armarPlan().esquema).toBe('junto_a_otro_sistema');
+	});
+
+	test('arranca en borrar el disco', () => {
+		// El que no puede fallar por sorpresa: en un disco vacío es lo único que
+		// tiene sentido, y es lo que el instalador venía haciendo siempre.
+		const store = useInstalacionStore();
+		expect(store.eleccion.esquema).toBe('borrar_todo');
+	});
+});
+
+describe('el esquema y el disco elegido', () => {
+	test('elegir un disco vacío vuelve a borrar el disco', () => {
+		// Se elige «al lado» en un disco con Windows y después se cambia a un
+		// disco vacío: el selector desaparece —no hay nada que conservar— pero
+		// la elección quedaba pegada. El plan se mandaba con
+		// `junto_a_otro_sistema` y `wipe: false`, o sea que archinstall usaba la
+		// tabla de particiones que hubiera en el disco en vez de rehacerla, y el
+		// resumen mostraba el cartel azul de «no se borra nada» sobre un disco
+		// que se iba a repartir entero.
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda'), discoDe('/dev/sdb')];
+
+		store.eleccion.disco = '/dev/sda';
+		store.eleccion.esquema = 'junto_a_otro_sistema';
+		expect(store.armarPlan().esquema).toBe('junto_a_otro_sistema');
+
+		store.eleccion.disco = '/dev/sdb';
+		// Por `armarPlan()` y no por `eleccion.esquema`: TypeScript estrecha el
+		// tipo tras la asignación de arriba y cree que ya no puede ser otra
+		// cosa. Y además es lo que importa — lo que se manda, no lo que dice
+		// una variable.
+		expect(store.armarPlan().esquema).toBe('borrar_todo');
+	});
+
+	test('volver a un disco con particiones no reactiva el esquema solo', () => {
+		// Al revés que lo anterior: normalizar no puede significar adivinar. Que
+		// el disco admita instalar al lado no quiere decir que sea lo que se
+		// pidió, y elegir por alguien qué hacer con un Windows es justo lo que
+		// no hay que hacer.
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda'), discoDe('/dev/sdb')];
+		store.eleccion.disco = '/dev/sda';
+		store.eleccion.esquema = 'junto_a_otro_sistema';
+		store.eleccion.disco = '/dev/sdb';
+		store.eleccion.disco = '/dev/sda';
+		expect(store.armarPlan().esquema).toBe('borrar_todo');
+	});
+});
+
+describe('avanzar del paso del disco', () => {
+	test('no se puede mientras el esquema elegido no se pueda aplicar', () => {
+		// Sin esto, la partición EFI de 100 MiB de un Windows mostraba el motivo
+		// y el botón seguía habilitado: la instalación arrancaba y moría al
+		// planificar. Falla del lado seguro —el ayudante planifica antes de
+		// tocar el disco— pero enterarse ahí es enterarse tarde.
+		const store = almacenCompleto();
+		store.vistaPrevia = vistaPreviaDe();
+		expect(store.puedeAvanzar('disco')).toBe(true);
+
+		store.errorVistaPrevia = 'la partición EFI que ya existe tiene 100 MiB';
+		expect(store.puedeAvanzar('disco')).toBe(false);
+	});
+
+	test('no se puede antes de que el plan esté calculado', () => {
+		// El resumen muestra el plan, y el paso siguiente es el punto sin
+		// retorno. Dejar pasar sin plan es dejar pasar sin haber comprobado que
+		// el disco elegido admite lo que se pidió.
+		const store = almacenCompleto();
+		// Como recién montada la pantalla: el disco elegido y el plan pedido
+		// pero todavía sin contestar.
+		store.vistaPrevia = null;
+		expect(store.puedeAvanzar('disco')).toBe(false);
+
+		store.vistaPrevia = vistaPreviaDe();
+		expect(store.puedeAvanzar('disco')).toBe(true);
 	});
 });

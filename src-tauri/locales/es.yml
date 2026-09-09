@@ -144,7 +144,7 @@ teclado:
 
 disco:
   titulo: Dónde se instala
-  intro: Elegí el disco. Se va a borrar por completo.
+  intro: Elegí el disco y qué hacer con lo que ya tiene adentro.
   sinDiscos: No se encontró ningún disco
   sinDiscosDetalle: >-
     No hay ningún disco en el que se pueda instalar. Si el equipo tiene un disco
@@ -161,6 +161,15 @@ disco:
   conParticiones: "{0} particiones"
   particion: Partición
   sinFormato: Sin formato
+  esquema: "Qué hacer con el disco"
+  borrarTodoNombre: "Borrar el disco entero"
+  borrarTodoAyuda: >-
+    Se pierde todo lo que hay adentro. Es lo que corresponde en un disco nuevo o en uno que ya no usás.
+  juntoNombre: "Instalar al lado de lo que ya está"
+  juntoAyuda: >-
+    Usa el espacio libre y no toca las particiones que existen. Reusa la partición de arranque EFI sin formatearla, así el otro sistema sigue arrancando.
+  juntoSoloUefi: "Sólo en equipos UEFI. Este arrancó por BIOS."
+  esquemaNoSePuede: "No se puede instalar al lado en este disco"
   sistemaArchivos: Sistema de archivos
   btrfsNombre: Btrfs
   btrfsAyuda: >-
@@ -339,6 +348,13 @@ resumen:
   campoDisco: Disco
   campoEsquema: Esquema
   campoEsquemaBorrarTodo: Borrar el disco entero
+  campoEsquemaJunto: "Instalar al lado de lo que ya está"
+  avisoJuntoTitulo: "No se va a borrar nada de {0}"
+  avisoJunto: >-
+    Se instala en el espacio libre. Las particiones que ya están no se tocan, y
+    la partición de arranque EFI se reusa sin formatearla, así el otro sistema
+    sigue arrancando. Aun así conviene tener un respaldo: cualquier cambio en la
+    tabla de particiones tiene riesgo.
   campoSistemaArchivos: Sistema de archivos
   campoCifrado: Cifrado
   campoZram: Intercambio en zram

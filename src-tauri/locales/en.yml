@@ -144,7 +144,7 @@ teclado:
 
 disco:
   titulo: Where it gets installed
-  intro: Pick the disk. It will be erased completely.
+  intro: Choose the disk and what to do with what is already on it.
   sinDiscos: No disk found
   sinDiscosDetalle: >-
     There's no disk available to install onto. If the computer has an NVMe drive
@@ -160,6 +160,15 @@ disco:
   conParticiones: "{0} partitions"
   particion: Partition
   sinFormato: Unformatted
+  esquema: "What to do with the disk"
+  borrarTodoNombre: "Erase the whole disk"
+  borrarTodoAyuda: >-
+    Everything on it is lost. This is what you want on a new disk, or on one you no longer use.
+  juntoNombre: "Install alongside what is already there"
+  juntoAyuda: >-
+    Uses the free space and leaves the existing partitions alone. It reuses the EFI boot partition without formatting it, so the other system keeps booting.
+  juntoSoloUefi: "UEFI machines only. This one booted through BIOS."
+  esquemaNoSePuede: "This disk cannot take an alongside install"
   sistemaArchivos: File system
   btrfsNombre: Btrfs
   btrfsAyuda: >-
@@ -339,6 +348,13 @@ resumen:
   campoDisco: Disk
   campoEsquema: Scheme
   campoEsquemaBorrarTodo: Erase the whole disk
+  campoEsquemaJunto: "Install alongside what is already there"
+  avisoJuntoTitulo: "Nothing on {0} will be erased"
+  avisoJunto: >-
+    It installs into the free space. The existing partitions are left alone, and
+    the EFI boot partition is reused without formatting it, so the other system
+    keeps booting. Even so, keep a backup: any change to the partition table
+    carries risk.
   campoSistemaArchivos: File system
   campoCifrado: Encryption
   campoZram: Swap on zram

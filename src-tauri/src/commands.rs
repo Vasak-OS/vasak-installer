@@ -22,7 +22,7 @@ use crate::complementos::{self, Complemento};
 use crate::hardware::{self, Hardware};
 use crate::layout::{self, Disco, Firmware, Rol};
 use crate::probe::{self, Sistema};
-use crate::protocol::{CuerpoPeticion, Paso, PlanInstalacion, SistemaArchivos};
+use crate::protocol::{CuerpoPeticion, EsquemaDisco, Paso, PlanInstalacion, SistemaArchivos};
 use crate::sidecar::Ayudante;
 use crate::validar::{self, ErrorNombre, Fuerza};
 
@@ -182,6 +182,7 @@ pub fn fuerza_contrasena(contrasena: String) -> Fuerza {
 #[tauri::command]
 pub fn vista_previa_particionado(
     disco: String,
+    esquema: EsquemaDisco,
     sistema_archivos: SistemaArchivos,
     cifrar: bool,
 ) -> Result<VistaPrevia, String> {
@@ -192,8 +193,19 @@ pub fn vista_previa_particionado(
         .ok_or_else(|| format!("no se encontró el disco {disco}"))?;
 
     let firmware = probe::detectar_firmware();
-    let plan = layout::planificar(elegido, firmware, sistema_archivos, cifrar)
-        .map_err(|e| e.to_string())?;
+    // El mismo despacho que hace el ayudante cuando instala de verdad. Que sean
+    // dos llamadas distintas y no una función compartida es lo único que podría
+    // hacer que la pantalla muestre un plan y se ejecute otro, así que las dos
+    // ramas se leen juntas y a propósito.
+    let plan = match esquema {
+        EsquemaDisco::BorrarTodo => {
+            layout::planificar_borrando(elegido, firmware, sistema_archivos, cifrar)
+        }
+        EsquemaDisco::JuntoAOtroSistema => {
+            layout::planificar_junto_a(elegido, firmware, sistema_archivos, cifrar)
+        }
+    }
+    .map_err(|e| e.to_string())?;
 
     Ok(vista_previa_de(elegido, firmware, &plan))
 }
@@ -204,11 +216,7 @@ pub fn vista_previa_particionado(
 /// es aritmética pura. Es lo que permite comparar la vista previa contra el plan
 /// real en un test, con números conocidos y sin depender de que la máquina que
 /// corre los tests tenga un disco.
-fn vista_previa_de(
-    disco: &Disco,
-    firmware: Firmware,
-    plan: &[layout::ParticionPlaneada],
-) -> VistaPrevia {
+fn vista_previa_de(disco: &Disco, firmware: Firmware, plan: &layout::Plan) -> VistaPrevia {
     const MIB: u64 = 1024 * 1024;
     VistaPrevia {
         firmware: match firmware {
@@ -216,6 +224,7 @@ fn vista_previa_de(
             Firmware::Bios => "bios".into(),
         },
         particiones: plan
+            .particiones
             .iter()
             .map(|p| ParticionVistaPrevia {
                 rol: match p.rol {
@@ -235,8 +244,20 @@ fn vista_previa_de(
                 cifrada: p.cifrada,
             })
             .collect(),
-        se_pierde: disco
-            .particiones
+        // Del plan y **no** de la lista de particiones del disco.
+        //
+        // Mientras el instalador sabía hacer una sola cosa, las dos listas eran
+        // la misma y daba igual de dónde salía. Ya no: instalando en el espacio
+        // libre no se pierde nada, y decir que se pierde un Windows que va a
+        // seguir estando es la peor manera de equivocarse en esta pantalla —
+        // alguien cancela una instalación que era segura, o peor, deja de
+        // creerle al cartel.
+        //
+        // `a_destruir` lo calcula desde el plan comparando geometrías además de
+        // rutas, así que también aparecería acá un error en el cálculo de
+        // huecos.
+        se_pierde: plan
+            .a_destruir(disco)
             .iter()
             .map(|p| match (&p.sistema_operativo, &p.sistema_archivos) {
                 // El sistema operativo primero: «Windows 11» dice mucho más que
@@ -479,7 +500,7 @@ mod tests {
         for firmware in [Firmware::Uefi, Firmware::Bios] {
             for fs in [SistemaArchivos::Btrfs, SistemaArchivos::Ext4] {
                 let plan = layout::planificar_borrando(&disco, firmware, fs, false).unwrap();
-                let vista = vista_previa_de(&disco, firmware, &plan.particiones);
+                let vista = vista_previa_de(&disco, firmware, &plan);
 
                 assert_eq!(vista.particiones.len(), plan.particiones.len());
                 for (previa, real) in vista.particiones.iter().zip(plan.particiones.iter()) {
@@ -493,6 +514,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Un disco con Windows: ESP de 512 MiB, `C:` de 20 GiB, y hueco al final.
+    fn disco_con_windows() -> Disco {
+        const MIB: u64 = 1024 * 1024;
+        Disco {
+            ruta: "/dev/prueba".into(),
+            modelo: "Disco de prueba".into(),
+            tamano_bytes: 256 * 1024 * MIB,
+            sector_logico: 512,
+            rotacional: false,
+            nvme: true,
+            en_uso: false,
+            particiones: vec![
+                layout::ParticionExistente {
+                    ruta: "/dev/prueba1".into(),
+                    inicio_bytes: MIB,
+                    tamano_bytes: 512 * MIB,
+                    sistema_archivos: Some("vfat".into()),
+                    etiqueta: Some("SYSTEM".into()),
+                    numero: Some(1),
+                    tipo_particion: Some("c12a7328-f81f-11d2-ba4b-00a0c93ec93b".into()),
+                    sistema_operativo: None,
+                },
+                layout::ParticionExistente {
+                    ruta: "/dev/prueba2".into(),
+                    inicio_bytes: 513 * MIB,
+                    tamano_bytes: 20 * 1024 * MIB,
+                    sistema_archivos: Some("ntfs".into()),
+                    etiqueta: Some("Windows".into()),
+                    numero: Some(2),
+                    tipo_particion: Some("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7".into()),
+                    sistema_operativo: Some("Windows 11".into()),
+                },
+            ],
+        }
+    }
+
+    /// **La lista de lo que se pierde sale del plan, no del disco.**
+    ///
+    /// Es el cartel que alguien lee antes del punto sin retorno, y equivocarlo
+    /// se paga de las dos maneras: decir que se pierde un Windows que va a
+    /// seguir estando hace que alguien cancele una instalación segura —o que
+    /// deje de creerle al cartel—, y no decir que se pierde uno que sí se
+    /// pierde es peor todavía.
+    ///
+    /// Mientras el instalador hacía una sola cosa, «todas las particiones del
+    /// disco» y «lo que el plan destruye» eran la misma lista. Ya no.
+    #[test]
+    fn la_vista_previa_no_miente_sobre_lo_que_se_pierde() {
+        let disco = disco_con_windows();
+
+        // Borrando: se pierde todo, y se nombra el sistema operativo.
+        let plan =
+            layout::planificar_borrando(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false)
+                .unwrap();
+        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
+        assert_eq!(vista.se_pierde.len(), 2, "{:?}", vista.se_pierde);
+        assert!(
+            vista.se_pierde.iter().any(|s| s.contains("Windows 11")),
+            "el cartel no nombra el sistema que se borra: {:?}",
+            vista.se_pierde
+        );
+
+        // Al lado: no se pierde nada, y el cartel tiene que estar vacío.
+        let plan =
+            layout::planificar_junto_a(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false)
+                .unwrap();
+        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
+        assert!(
+            vista.se_pierde.is_empty(),
+            "instalando al lado el cartel dice que se pierde {:?}",
+            vista.se_pierde
+        );
+        // Y el ESP ajeno aparece en el plan, para que el resumen lo pueda
+        // mostrar como lo que es: algo que se reusa.
+        assert_eq!(vista.particiones.len(), 2);
+        assert!(vista.particiones.iter().any(|p| p.rol == "esp"));
     }
 
     /// Con cifrado, la raíz de la vista previa tiene que salir marcada.
@@ -512,7 +611,7 @@ mod tests {
             particiones: Vec::new(),
         };
         let plan = layout::planificar_borrando(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true).unwrap();
-        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan.particiones);
+        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
 
         assert!(!vista.particiones[0].cifrada, "el ESP nunca va cifrado");
         assert!(vista.particiones[1].cifrada, "la raíz sí");

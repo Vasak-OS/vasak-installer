@@ -15,7 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { defineStore } from 'pinia';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 /** Los pasos del asistente, en orden. Es la fuente del sidebar. */
 export const PASOS = [
@@ -110,6 +110,15 @@ export interface VistaPrevia {
 	se_pierde: string[];
 }
 
+/**
+ * Qué hacer con el disco.
+ *
+ * `junto_a_otro_sistema` instala en el espacio libre sin tocar nada de lo que
+ * ya está, y reusa la partición EFI que exista sin formatearla — que es lo
+ * único que deja al otro sistema arrancando.
+ */
+export type EsquemaDisco = 'borrar_todo' | 'junto_a_otro_sistema';
+
 /** Un paso de la instalación, tal como lo informa el backend. */
 export interface ProgresoPaso {
 	paso: string;
@@ -160,6 +169,14 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	const discos = ref<Disco[]>([]);
 	const catalogos = ref<Catalogos>({ zonas: [], idiomas: [], teclados: [] });
 	const vistaPrevia = ref<VistaPrevia | null>(null);
+	/**
+	 * Por qué no se pudo planificar, cuando el motivo es del esquema elegido.
+	 *
+	 * Que no haya hueco libre, o que la partición EFI que ya está sea demasiado
+	 * chica, no son fallos del disco: son fallos de «instalar al lado». Hay que
+	 * decirlos, o la opción queda elegida sin que pase nada.
+	 */
+	const errorVistaPrevia = ref<string | null>(null);
 	const complementos = ref<Complementos>({
 		catalogo: [],
 		categorias: [],
@@ -178,6 +195,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		ntp: true,
 
 		disco: '',
+		esquema: 'borrar_todo' as EsquemaDisco,
 		sistemaArchivos: 'btrfs' as SistemaArchivos,
 		cifrar: false,
 		zram: true,
@@ -245,6 +263,38 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 
 	const discoElegido = computed(() => discos.value.find((d) => d.ruta === eleccion.disco) ?? null);
 
+	/**
+	 * El esquema vuelve a «borrar el disco» cuando el elegido no tiene nada.
+	 *
+	 * La pantalla esconde el selector en ese caso —no hay nada que conservar—
+	 * pero esconderlo no deselecciona: elegir «al lado» en un disco con Windows
+	 * y después cambiar a un disco vacío dejaba la elección pegada. El plan
+	 * salía con `wipe: false`, o sea que archinstall usaba la tabla de
+	 * particiones que hubiera en el disco en vez de rehacerla, y el resumen
+	 * mostraba el cartel de «no se borra nada» sobre un disco que se iba a
+	 * repartir entero.
+	 *
+	 * Va acá y no en la vista porque el disco también se elige solo: hay una
+	 * preselección al arrancar, y un arreglo en la pantalla no la alcanzaría.
+	 *
+	 * Sólo en un sentido. Volver a un disco con particiones **no** vuelve a
+	 * poner «al lado»: normalizar no puede significar adivinar, y elegir por
+	 * alguien qué hacer con un Windows es justamente lo que no hay que hacer.
+	 */
+	watch(
+		discoElegido,
+		(disco) => {
+			if ((disco?.particiones.length ?? 0) === 0) {
+				eleccion.esquema = 'borrar_todo';
+			}
+		},
+		// Sincrónico y no en el ciclo de Vue: entre que se elige el disco y que
+		// corre un observador diferido hay una ventana en la que `eleccion`
+		// dice una cosa y la pantalla otra. `armarPlan()` lee `eleccion`
+		// directo, así que esa ventana alcanza para mandar el esquema viejo.
+		{ flush: 'sync' }
+	);
+
 	const discosUsables = computed(() => discos.value.filter((d) => !d.en_uso));
 
 	/**
@@ -274,6 +324,15 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				// máquina con un solo disco de 16 GiB quedaba elegido, el botón
 				// habilitado, y el rechazo llegaba recién al apretar Instalar.
 				if (discoElegido.value.tamano_bytes < MINIMO_GIB * 1024 ** 3) return false;
+				// El plan tiene que estar calculado y tiene que haber salido.
+				//
+				// Sin esto, un esquema que el disco no admite —la partición EFI
+				// de 100 MiB de un Windows, o un hueco libre que no alcanza—
+				// mostraba el motivo y dejaba el botón habilitado igual: la
+				// instalación arrancaba y moría al planificar. Falla del lado
+				// seguro, porque el ayudante planifica antes de tocar el disco,
+				// pero enterarse ahí es enterarse tarde.
+				if (!vistaPrevia.value || errorVistaPrevia.value) return false;
 				if (!eleccion.cifrar) return true;
 				return secretos.cifrado.length > 0 && secretos.cifrado === secretos.cifradoRepetida;
 			}
@@ -300,7 +359,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	function armarPlan() {
 		return {
 			disco: eleccion.disco,
-			esquema: 'borrar_todo',
+			esquema: eleccion.esquema,
 			sistema_archivos: eleccion.sistemaArchivos,
 			cifrar: eleccion.cifrar,
 			zram: eleccion.zram,
@@ -450,22 +509,33 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		const mia = ++vistaPreviaEnVuelo;
 		if (!eleccion.disco) {
 			vistaPrevia.value = null;
+			// También el motivo: si no, uno viejo seguiría bloqueando el paso
+			// después de cambiar de disco.
+			errorVistaPrevia.value = null;
 			return;
 		}
 		try {
 			const resultado = await invoke<VistaPrevia>('vista_previa_particionado', {
 				disco: eleccion.disco,
+				esquema: eleccion.esquema,
 				sistemaArchivos: eleccion.sistemaArchivos,
 				cifrar: eleccion.cifrar,
 			});
 			if (mia !== vistaPreviaEnVuelo) return;
 			vistaPrevia.value = resultado;
-		} catch {
+			errorVistaPrevia.value = null;
+		} catch (e) {
 			if (mia !== vistaPreviaEnVuelo) return;
-			// Un disco que no se puede planificar —demasiado chico, en uso— no
-			// es un error de la aplicación: la tarjeta del disco ya lo dice, y
-			// el resumen simplemente no muestra el detalle.
 			vistaPrevia.value = null;
+			// El motivo se guarda, que antes se descartaba.
+			//
+			// Mientras el único esquema era borrar el disco, un fallo acá quería
+			// decir «este disco no sirve» y eso ya lo dice su tarjeta. Con el
+			// esquema no destructivo el fallo es del **esquema** y no del disco:
+			// que no haya hueco libre, o que la partición EFI de Windows sea de
+			// 100 MiB. Sin el motivo, la opción quedaba elegida y no pasaba
+			// nada, sin decir por qué.
+			errorVistaPrevia.value = String(e);
 		}
 	}
 
@@ -519,6 +589,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		discos,
 		catalogos,
 		vistaPrevia,
+		errorVistaPrevia,
 		ayudanteListo,
 		errorAyudante,
 		eleccion,
