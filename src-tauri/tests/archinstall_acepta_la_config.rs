@@ -120,8 +120,23 @@ if archinstall_las_haria:
         "vasak-desktop-settings.install antes de que queden los dos."
     )
 
-if pedimos_instantaneas and btrfs_arg is None:
-    problemas.append("incoherencia interna de la prueba")
+# Y el contrato al revés: si el plan trae la raíz btrfs con `@` montado en `/`,
+# el JSON **tiene** que pedir las instantáneas. Es la mitad que importa —la otra
+# comprobación sólo dice que lo que mandamos está bien formado, no que lo
+# mandemos cuando corresponde—.
+#
+# Se mira el JSON crudo y no `is_default_root()` sobre los objetos de
+# archinstall, porque eso hoy da falso siempre por el problema de arriba: usarlo
+# acá haría que esta comprobación no comprobara nada.
+hay_raiz_btrfs_default = any(
+    p.get("fs_type") == "btrfs"
+    and any(s["name"] == "@" and s["mountpoint"] == "/" for s in p.get("btrfs", []))
+    for p in cfg["disk_config"]["device_modifications"][0]["partitions"]
+)
+if hay_raiz_btrfs_default and not pedimos_instantaneas:
+    problemas.append("hay raíz btrfs con @ en / y el JSON no pide instantáneas")
+if pedimos_instantaneas and not hay_raiz_btrfs_default:
+    problemas.append("el JSON pide instantáneas y no hay raíz btrfs con @ en /")
 
 print("\n".join(problemas))
 "#;
