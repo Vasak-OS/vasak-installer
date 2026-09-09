@@ -290,6 +290,34 @@ pub fn configuracion(
         });
     }
 
+    // Instantáneas: se las pedimos a archinstall en vez de armarlas después.
+    //
+    // `setup_btrfs_snapshot` instala snapper, le crea las configuraciones de
+    // `root` y `home`, prende sus temporizadores, y —porque el cargador es
+    // GRUB— instala y configura además `grub-btrfs` y `grub-btrfsd`, que son
+    // los que ponen las instantáneas en el menú de arranque. Todo eso ya está
+    // escrito y probado ahí; hacerlo por nuestra cuenta sería mantener una
+    // segunda copia peor.
+    //
+    // Sólo se activa si hay un subvolumen `@` montado en `/`
+    // (`has_default_btrfs_vols`), así que la condición de acá es la misma que
+    // usa archinstall: sin btrfs esta clave no hace nada, pero tampoco molesta.
+    // Se manda igual sólo cuando corresponde para que el JSON diga lo que va a
+    // pasar.
+    let raiz_btrfs_con_subvolumen_default = particiones.iter().any(|p| {
+        p.subvolumenes
+            .iter()
+            .any(|(nombre, punto)| *nombre == "@" && *punto == "/")
+    });
+    if raiz_btrfs_con_subvolumen_default {
+        disk_config["btrfs_options"] = json!({
+            // «Snapper» y no «Timeshift»: es el que se integra con pacman a
+            // través de `snap-pac` —una instantánea antes y otra después de
+            // cada transacción— y el que `grub-btrfs` lee sin configurar nada.
+            "snapshot_config": { "type": "Snapper" },
+        });
+    }
+
     json!({
         // El idioma de **los menús de archinstall**, que no vamos a ver porque
         // corre en silencio. Se deja en inglés para que sus mensajes de error en
@@ -766,6 +794,56 @@ zsh";
         let arch = REPO_URL.find("$arch").expect("falta $arch");
         let repo = REPO_URL.rfind("$repo").expect("falta $repo");
         assert!(arch < repo, "$arch tiene que ir antes que $repo: {REPO_URL}");
+    }
+
+    /// **Las instantáneas se piden en el JSON, y sólo con btrfs.**
+    ///
+    /// `setup_btrfs_snapshot` de archinstall es lo que instala snapper y
+    /// `grub-btrfs` —el que pone las instantáneas en el menú de arranque—, y
+    /// no corre si esta clave no está. El nombre del tipo va tal cual: es un
+    /// `StrEnum` de Python y `SnapshotType("snapper")` en minúscula revienta.
+    ///
+    /// La condición tiene que ser la misma que la de archinstall
+    /// (`has_default_btrfs_vols`: un subvolumen `@` montado en `/`). Con ext4 o
+    /// xfs no hay subvolúmenes y la clave no debe aparecer, porque diría que va
+    /// a pasar algo que no va a pasar.
+    #[test]
+    fn las_instantaneas_se_piden_solo_cuando_hay_btrfs() {
+        let c = config(false);
+        assert_eq!(
+            c["disk_config"]["btrfs_options"]["snapshot_config"]["type"], "Snapper",
+            "{}",
+            c["disk_config"]
+        );
+
+        for fs in [SistemaArchivos::Ext4, SistemaArchivos::Xfs] {
+            let d = disco();
+            let particiones = planificar(&d, Firmware::Uefi, fs, false).unwrap();
+            // Sin subvolumen `@`, archinstall ignoraría la clave: que no esté.
+            assert!(
+                !particiones
+                    .iter()
+                    .any(|p| p.subvolumenes.iter().any(|(n, _)| *n == "@")),
+                "{fs:?}: apareció un subvolumen @ donde no debería haberlo"
+            );
+            let c = configuracion(
+                &plan(false),
+                &particiones,
+                d.sector_logico,
+                Firmware::Uefi,
+                &FuentesDePaquetes {
+                    escritorio: &["base".to_string()],
+                    aporte: &Default::default(),
+                    necesarios: &Default::default(),
+                },
+                Some("4.4.0"),
+            );
+            assert!(
+                c["disk_config"]["btrfs_options"].is_null(),
+                "{fs:?}: {}",
+                c["disk_config"]
+            );
+        }
     }
 
     #[test]
