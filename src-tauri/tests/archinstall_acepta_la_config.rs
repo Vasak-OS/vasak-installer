@@ -22,7 +22,8 @@ use std::process::Command;
 use vasak_installer_lib::archconfig::{configuracion, FuentesDePaquetes};
 use vasak_installer_lib::complementos::Aporte;
 use vasak_installer_lib::layout::{
-    planificar_borrando, planificar_junto_a, Disco, Firmware, ParticionExistente,
+    planificar_borrando, planificar_junto_a, planificar_sobre, Disco, Firmware,
+    ParticionExistente,
 };
 use vasak_installer_lib::protocol::{EsquemaDisco, PlanInstalacion, Secretos, SistemaArchivos};
 
@@ -208,6 +209,7 @@ fn plan(fs: SistemaArchivos, cifrar: bool) -> PlanInstalacion {
     PlanInstalacion {
         disco: "/dev/vda".into(),
         esquema: EsquemaDisco::BorrarTodo,
+        particion_destino: None,
         sistema_archivos: fs,
         cifrar,
         zram: true,
@@ -322,6 +324,84 @@ fn archinstall_acepta_el_plan_que_no_borra_el_disco() {
             assert!(
                 salida.is_empty(),
                 "archinstall rechaza el plan no destructivo de {fs:?} (cifrado: {cifrar}):\n{salida}"
+            );
+        }
+    }
+}
+
+/// **Y que acepte el plan que formatea una partición que ya existe.**
+///
+/// Estrena `modify`, que es el estado del que más depende que esto no rompa
+/// nada: archinstall borra la partición y la rehace **con la geometría que le
+/// mandemos**. Un número mal puesto no da error, mueve la partición encima de
+/// la de al lado.
+#[test]
+fn archinstall_acepta_el_plan_que_formatea_una_particion() {
+    if !hay_archinstall() {
+        eprintln!("archinstall no está instalado: se saltea");
+        return;
+    }
+
+    let d = disco_con_windows();
+    let destino = d.particiones[1].clone();
+
+    for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+        for cifrar in [false, true] {
+            let plan_disco =
+                planificar_sobre(&d, &destino.ruta, Firmware::Uefi, fs, cifrar).unwrap();
+
+            // Que sea de verdad este modo: se pierde la elegida y nada más.
+            let victimas: Vec<&str> = plan_disco
+                .a_destruir(&d)
+                .iter()
+                .map(|p| p.ruta.as_str())
+                .collect();
+            assert_eq!(victimas, [destino.ruta.as_str()], "{fs:?}/{cifrar}");
+
+            let c = configuracion(
+                &plan(fs, cifrar),
+                &plan_disco,
+                d.sector_logico,
+                Firmware::Uefi,
+                &FuentesDePaquetes {
+                    escritorio: &["base".to_string()],
+                    aporte: &Aporte::default(),
+                    necesarios: &Default::default(),
+                },
+                Some("4.4.0"),
+            );
+
+            let particiones = c["disk_config"]["device_modifications"][0]["partitions"]
+                .as_array()
+                .unwrap();
+            let raiz = particiones
+                .iter()
+                .find(|p| p["dev_path"] == destino.ruta.as_str())
+                .unwrap_or_else(|| panic!("{fs:?}/{cifrar}: la elegida no está en el JSON"));
+            assert_eq!(raiz["status"], "modify", "{fs:?}/{cifrar}");
+
+            // La geometría, contra los bytes del disco y no contra el plan: es
+            // lo que archinstall va a usar para rehacer la partición.
+            //
+            // `value` va en MiB —lo dice el `unit` de al lado— y no en
+            // sectores. Es lo primero que se escribe mal acá.
+            let mib = 1024 * 1024;
+            assert_eq!(raiz["start"]["unit"], "MiB");
+            assert_eq!(
+                raiz["start"]["value"].as_u64().unwrap() * mib,
+                destino.inicio_bytes,
+                "{fs:?}/{cifrar}: el JSON movería la partición"
+            );
+            assert_eq!(
+                raiz["size"]["value"].as_u64().unwrap() * mib,
+                destino.tamano_bytes,
+                "{fs:?}/{cifrar}: el JSON cambiaría el tamaño"
+            );
+
+            let salida = ejecutar(&serde_json::to_string(&c).unwrap());
+            assert!(
+                salida.is_empty(),
+                "archinstall rechaza el plan sobre una partición de {fs:?} (cifrado: {cifrar}):\n{salida}"
             );
         }
     }

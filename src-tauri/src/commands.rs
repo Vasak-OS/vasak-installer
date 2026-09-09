@@ -183,6 +183,7 @@ pub fn fuerza_contrasena(contrasena: String) -> Fuerza {
 pub fn vista_previa_particionado(
     disco: String,
     esquema: EsquemaDisco,
+    particion_destino: Option<String>,
     sistema_archivos: SistemaArchivos,
     cifrar: bool,
 ) -> Result<VistaPrevia, String> {
@@ -193,18 +194,14 @@ pub fn vista_previa_particionado(
         .ok_or_else(|| format!("no se encontró el disco {disco}"))?;
 
     let firmware = probe::detectar_firmware();
-    // El mismo despacho que hace el ayudante cuando instala de verdad. Que sean
-    // dos llamadas distintas y no una función compartida es lo único que podría
-    // hacer que la pantalla muestre un plan y se ejecute otro, así que las dos
-    // ramas se leen juntas y a propósito.
-    let plan = match esquema {
-        EsquemaDisco::BorrarTodo => {
-            layout::planificar_borrando(elegido, firmware, sistema_archivos, cifrar)
-        }
-        EsquemaDisco::JuntoAOtroSistema => {
-            layout::planificar_junto_a(elegido, firmware, sistema_archivos, cifrar)
-        }
-    }
+    let plan = layout::planificar_con(
+        elegido,
+        esquema,
+        particion_destino.as_deref(),
+        firmware,
+        sistema_archivos,
+        cifrar,
+    )
     .map_err(|e| e.to_string())?;
 
     Ok(vista_previa_de(elegido, firmware, &plan))

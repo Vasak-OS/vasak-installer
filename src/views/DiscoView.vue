@@ -11,6 +11,7 @@ import TextInput from '@/components/ui/TextInput.vue';
 import {
 	type Disco,
 	type EsquemaDisco,
+	type ParticionExistente,
 	type SistemaArchivos,
 	useInstalacionStore,
 } from '@/stores/instalacion';
@@ -34,7 +35,29 @@ const esquemas: { valor: EsquemaDisco; nombre: string; ayuda: string }[] = [
 		ayuda: 'disco.borrarTodoAyuda',
 	},
 	{ valor: 'junto_a_otro_sistema', nombre: 'disco.juntoNombre', ayuda: 'disco.juntoAyuda' },
+	{ valor: 'sobre_una_particion', nombre: 'disco.sobreNombre', ayuda: 'disco.sobreAyuda' },
 ];
+
+/** El GUID que GPT le da a la partición de sistema EFI. */
+const GUID_ESP = 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b';
+
+/**
+ * Por qué una partición no se puede usar como raíz, o `null` si se puede.
+ *
+ * El ESP no se puede: formatearlo deja el equipo sin partición de arranque y de
+ * paso le borra el cargador al otro sistema. Y las que no llegan al mínimo
+ * tampoco.
+ *
+ * Se muestran deshabilitadas y con el motivo, igual que los discos: una
+ * partición que desaparece de la lista es alguien buscando la que sabe que
+ * existe. El plan las rechaza igual — lo que impide un desastre no puede
+ * depender de que la pantalla esté bien.
+ */
+function noSePuedeUsar(particion: ParticionExistente): string | null {
+	if (particion.tipo_particion?.toLowerCase() === GUID_ESP) return 'disco.esParticionDeArranque';
+	if (particion.tamano_bytes < MINIMO_GIB * 1024 ** 3) return 'disco.particionChica';
+	return null;
+}
 
 /**
  * El selector sólo aparece si hay algo que conservar.
@@ -57,6 +80,9 @@ const hayQueElegirEsquema = computed(() => (store.discoElegido?.particiones.leng
  * lo hay, aparece abajo.
  */
 const soloUefi = computed(() => store.vistaPrevia?.firmware === 'bios');
+
+/** Si hay que mostrar la lista de particiones para elegir una. */
+const eligeParticion = computed(() => store.eleccion.esquema === 'sobre_una_particion');
 
 const sistemasDeArchivos: { valor: SistemaArchivos; nombre: string; ayuda: string }[] = [
 	{ valor: 'btrfs', nombre: 'disco.btrfsNombre', ayuda: 'disco.btrfsAyuda' },
@@ -218,6 +244,30 @@ onMounted(async () => {
         <p v-if="soloUefi" class="mt-2 text-tx-muted text-xs">
           {{ t('disco.juntoSoloUefi') }}
         </p>
+
+        <!-- Cuál se formatea. Sólo con ese esquema: en los otros dos no hay
+             nada que elegir, y una lista de más es una lista que alguien lee
+             creyendo que decide algo. -->
+        <div v-if="eligeParticion" class="mt-3">
+          <p class="mb-2 font-medium text-sm">{{ t('disco.elegirParticion') }}</p>
+          <div role="radiogroup" :aria-label="t('disco.elegirParticion')" class="space-y-2">
+            <OpcionRadio
+              v-for="particion in store.discoElegido?.particiones ?? []"
+              :key="particion.ruta"
+              :seleccionada="store.eleccion.particionDestino === particion.ruta"
+              :label="`${particion.ruta} · ${tamano(particion.tamano_bytes)}`"
+              :descripcion="
+                noSePuedeUsar(particion)
+                  ? t(noSePuedeUsar(particion) as string)
+                  : particion.sistema_operativo ??
+                    particion.sistema_archivos ??
+                    t('disco.sinFormato')
+              "
+              :disabled="Boolean(noSePuedeUsar(particion))"
+              @elegir="store.eleccion.particionDestino = particion.ruta"
+            />
+          </div>
+        </div>
 
         <!--
           El motivo por el que el esquema elegido no se puede aplicar: que no

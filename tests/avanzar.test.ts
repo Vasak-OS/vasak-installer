@@ -431,3 +431,45 @@ describe('avanzar del paso del disco', () => {
 		expect(store.puedeAvanzar('disco')).toBe(true);
 	});
 });
+
+describe('instalar sobre una partición', () => {
+	test('la ruta viaja sólo con su esquema', () => {
+		// Un resto de una elección anterior viajando con un plan que no lo mira
+		// hace que el archivo de configuración guardado diga algo que no pasó, y
+		// esos archivos son lo que se lee cuando hay que averiguar qué se hizo.
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda')];
+		store.eleccion.disco = '/dev/sda';
+		store.eleccion.esquema = 'sobre_una_particion';
+		store.eleccion.particionDestino = '/dev/sda1';
+		expect(store.armarPlan().particion_destino).toBe('/dev/sda1');
+
+		store.eleccion.esquema = 'borrar_todo';
+		expect(store.armarPlan().particion_destino).toBeNull();
+	});
+
+	test('cambiar de disco olvida la partición elegida', () => {
+		// Es de **ese** disco: al cambiar no existe más, y dejarla puesta
+		// mandaría una ruta que apunta a otro disco.
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda'), conParticiones('/dev/sdb')];
+		store.eleccion.disco = '/dev/sda';
+		store.eleccion.esquema = 'sobre_una_particion';
+		store.eleccion.particionDestino = '/dev/sda1';
+
+		store.eleccion.disco = '/dev/sdb';
+		expect(store.eleccion.particionDestino).toBe('');
+	});
+
+	test('no se puede avanzar sin haber elegido cuál', () => {
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda')];
+		store.eleccion.disco = '/dev/sda';
+		store.vistaPrevia = vistaPreviaDe();
+		store.eleccion.esquema = 'sobre_una_particion';
+		expect(store.puedeAvanzar('disco')).toBe(false);
+
+		store.eleccion.particionDestino = '/dev/sda1';
+		expect(store.puedeAvanzar('disco')).toBe(true);
+	});
+});

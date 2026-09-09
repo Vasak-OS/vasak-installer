@@ -54,6 +54,15 @@ pub struct PlanInstalacion {
     /// Ruta del disco a usar, tal como la devolvió el sondeo (`/dev/nvme0n1`).
     pub disco: String,
     pub esquema: EsquemaDisco,
+    /// Sobre qué partición se instala. Sólo tiene sentido con
+    /// `SobreUnaParticion`, y ahí es obligatoria: el planificador corta si
+    /// falta.
+    ///
+    /// Va como campo aparte y no adentro de la variante para que el esquema
+    /// siga siendo una cadena sola en el JSON, que es lo que la interfaz manda
+    /// y lo que ya está escrito en los archivos de configuración guardados.
+    #[serde(default)]
+    pub particion_destino: Option<String>,
     pub sistema_archivos: SistemaArchivos,
     /// Cifrado LUKS de la raíz. La frase va aparte, en `secretos`.
     pub cifrar: bool,
@@ -128,6 +137,9 @@ pub enum EsquemaDisco {
     /// ESP que exista se reusa sin formatearlo, que es lo que deja al otro
     /// sistema arrancando.
     JuntoAOtroSistema,
+    /// Instala sobre una partición que ya existe, formateando **sólo esa**.
+    /// Cuál es va en `particion_destino`.
+    SobreUnaParticion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
