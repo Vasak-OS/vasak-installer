@@ -21,7 +21,9 @@ use std::process::Command;
 
 use vasak_installer_lib::archconfig::{configuracion, FuentesDePaquetes};
 use vasak_installer_lib::complementos::Aporte;
-use vasak_installer_lib::layout::{planificar, Disco, Firmware};
+use vasak_installer_lib::layout::{
+    planificar_borrando, planificar_junto_a, Disco, Firmware, ParticionExistente,
+};
 use vasak_installer_lib::protocol::{EsquemaDisco, PlanInstalacion, Secretos, SistemaArchivos};
 
 /// Lo que `parse_arg` hace con cada partición, y lo que después le pide.
@@ -47,18 +49,34 @@ for partition in cfg["disk_config"]["device_modifications"][0]["partitions"]:
 
     flags = [g for f in partition.get("flags", []) if (g := PartitionFlag.from_string(f))]
     fs_type = FilesystemType(partition["fs_type"]) if partition.get("fs_type") else None
+    # `ModificationStatus` es un StrEnum: un estado que no conozca revienta acá
+    # con ValueError, que es exactamente lo que se quiere comprobar.
+    estado = ModificationStatus(partition["status"])
     mod = PartitionModification(
-        status=ModificationStatus(partition["status"]),
+        status=estado,
         fs_type=fs_type,
         start=Size.parse_args(partition["start"]),
         length=Size.parse_args(partition["size"]),
         mount_options=partition["mount_options"],
         mountpoint=Path(partition["mountpoint"]) if partition["mountpoint"] else None,
-        dev_path=None,
+        # Del JSON y no fijo en None: en las que se crean viene nulo, y en las
+        # que ya existen es obligatorio. Fijarlo acá haría que el arnés probara
+        # algo distinto de lo que se manda.
+        dev_path=Path(partition["dev_path"]) if partition.get("dev_path") else None,
         type=PartitionType(partition["type"]),
         flags=flags,
         btrfs_subvols=SubvolumeModification.parse_args(partition.get("btrfs", [])),
     )
+    # Una partición que ya existe **tiene** que traer su ruta: sin ella
+    # archinstall no sabe cuál del disco es, y `models/device.py:904` lo rechaza
+    # con «Device path must be set». Es el error que aparecería recién al
+    # reusar el ESP de otro sistema, o sea en el equipo de alguien.
+    if mod.is_exists_or_modify() and not partition.get("dev_path"):
+        problemas.append(f"{nombre}: es «{estado.value}» y va sin dev_path")
+    # Y una que se crea no puede traerla: todavía no existe, y una ruta
+    # adivinada apuntaría a la partición de otro.
+    if estado == ModificationStatus.CREATE and partition.get("dev_path"):
+        problemas.append(f"{nombre}: se crea y ya trae dev_path {partition['dev_path']}")
     try:
         # Lo que `_setup_partition` pide para toda partición que crea.
         mod.safe_fs_type
@@ -154,6 +172,38 @@ fn disco() -> Disco {
     }
 }
 
+/// El mismo disco, pero con un Windows ya instalado y un hueco libre al final.
+///
+/// El ESP es de 512 MiB y no de los 100 que hace Windows, porque con 100 el
+/// plan falla antes —a propósito— y no habría nada que pasarle a archinstall.
+fn disco_con_windows() -> Disco {
+    let mib = 1024 * 1024;
+    let mut d = disco();
+    d.particiones = vec![
+        ParticionExistente {
+            ruta: "/dev/vda1".into(),
+            inicio_bytes: mib,
+            tamano_bytes: 512 * mib,
+            sistema_archivos: Some("vfat".into()),
+            etiqueta: Some("SYSTEM".into()),
+            numero: Some(1),
+            tipo_particion: Some("c12a7328-f81f-11d2-ba4b-00a0c93ec93b".into()),
+            sistema_operativo: None,
+        },
+        ParticionExistente {
+            ruta: "/dev/vda2".into(),
+            inicio_bytes: 513 * mib,
+            tamano_bytes: 20 * 1024 * mib,
+            sistema_archivos: Some("ntfs".into()),
+            etiqueta: Some("Windows".into()),
+            numero: Some(2),
+            tipo_particion: Some("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7".into()),
+            sistema_operativo: Some("Windows 11".into()),
+        },
+    ];
+    d
+}
+
 fn plan(fs: SistemaArchivos, cifrar: bool) -> PlanInstalacion {
     PlanInstalacion {
         disco: "/dev/vda".into(),
@@ -198,7 +248,7 @@ fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
     for firmware in [Firmware::Uefi, Firmware::Bios] {
         for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
             for cifrar in [false, true] {
-                let particiones = planificar(&d, firmware, fs, cifrar).unwrap();
+                let particiones = planificar_borrando(&d, firmware, fs, cifrar).unwrap();
                 let c = configuracion(
                     &plan(fs, cifrar),
                     &particiones,
@@ -221,6 +271,58 @@ fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
                     "archinstall rechaza la configuración de {firmware:?}/{fs:?} (cifrado: {cifrar}):\n{salida}"
                 );
             }
+        }
+    }
+}
+
+/// **Y que acepte el plan que no borra el disco.**
+///
+/// Es el que estrena `existing` y `dev_path`, o sea el camino que nunca pasó
+/// por archinstall. Un rechazo acá aparecería recién al instalar al lado de un
+/// Windows, con el ESP ajeno ya en juego.
+#[test]
+fn archinstall_acepta_el_plan_que_no_borra_el_disco() {
+    if !hay_archinstall() {
+        eprintln!("archinstall no está instalado: se saltea");
+        return;
+    }
+
+    let d = disco_con_windows();
+    for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+        for cifrar in [false, true] {
+            let plan_disco = planificar_junto_a(&d, Firmware::Uefi, fs, cifrar).unwrap();
+
+            // Que sea de verdad el modo no destructivo y no una copia del otro:
+            // sin esto el test pasaría igual comprobando lo de siempre.
+            assert!(!plan_disco.borrar_disco, "{fs:?}/{cifrar}");
+            assert!(
+                plan_disco.a_destruir(&d).is_empty(),
+                "{fs:?}/{cifrar}: el plan destruiría algo"
+            );
+
+            let c = configuracion(
+                &plan(fs, cifrar),
+                &plan_disco,
+                d.sector_logico,
+                Firmware::Uefi,
+                &FuentesDePaquetes {
+                    escritorio: &["base".to_string()],
+                    aporte: &Aporte::default(),
+                    necesarios: &Default::default(),
+                },
+                Some("4.4.0"),
+            );
+
+            assert_eq!(
+                c["disk_config"]["device_modifications"][0]["wipe"], false,
+                "{fs:?}/{cifrar}: el JSON pide borrar el disco"
+            );
+
+            let salida = ejecutar(&serde_json::to_string(&c).unwrap());
+            assert!(
+                salida.is_empty(),
+                "archinstall rechaza el plan no destructivo de {fs:?} (cifrado: {cifrar}):\n{salida}"
+            );
         }
     }
 }

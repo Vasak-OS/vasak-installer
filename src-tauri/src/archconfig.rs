@@ -21,7 +21,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::complementos::Aporte;
-use crate::layout::{Firmware, ParticionPlaneada};
+use crate::layout::{Accion, Firmware, ParticionPlaneada, Plan};
 use crate::protocol::PlanInstalacion;
 
 /// Nombre del repositorio propio en el `pacman.conf` del sistema instalado.
@@ -140,7 +140,21 @@ fn particion(p: &ParticionPlaneada, indice: usize, sector_logico: u64) -> Value 
         // el mismo archivo, y eso es lo que permite compararlos cuando algo
         // falla.
         "obj_id": format!("vsk-part-{indice}"),
-        "status": "create",
+        // Los tres estados de archinstall que usamos, y lo que hace cada uno
+        // (medido en `device_handler.py` y `filesystem.py`, no supuesto):
+        //
+        //   create    la crea en esta geometría y la formatea
+        //   modify    la borra, la rehace igual y la formatea
+        //   existing  no la toca ni la formatea; sólo la monta
+        //
+        // `existing` es el que permite reusar el ESP de otro sistema:
+        // `partition()` filtra por `not p.exists()` antes de tocar la tabla, y
+        // `_format_partitions` por `is_create_or_modify()`.
+        "status": match p.accion {
+            Accion::Crear => "create",
+            Accion::Formatear => "modify",
+            Accion::Conservar => "existing",
+        },
         "type": "primary",
         "start": tamano(p.inicio_mib, sector_logico),
         "size": tamano(p.tamano_mib, sector_logico),
@@ -148,10 +162,14 @@ fn particion(p: &ParticionPlaneada, indice: usize, sector_logico: u64) -> Value 
         "mountpoint": p.punto_montaje,
         "mount_options": p.opciones_montaje,
         "flags": p.banderas,
-        // `null` y no la ruta: la partición todavía no existe, y archinstall lo
-        // completa cuando la crea. Adivinar `/dev/sda1` acá se rompe en NVMe,
-        // donde es `/dev/nvme0n1p1`.
-        "dev_path": null,
+        // En las que se crean va `null`: la partición todavía no existe y
+        // archinstall lo completa al crearla. Adivinar `/dev/sda1` acá se rompe
+        // en NVMe, donde es `/dev/nvme0n1p1`.
+        //
+        // En las que ya existen es **obligatorio**: `models/device.py:904`
+        // rechaza una `existing`, `modify` o `delete` sin `dev_path`. Es
+        // también lo único que identifica cuál del disco es.
+        "dev_path": p.ruta,
         "btrfs": p.subvolumenes
             .iter()
             .map(|(nombre, punto)| json!({ "name": nombre, "mountpoint": punto }))
@@ -231,7 +249,7 @@ pub fn paquetes_finales(fuentes: &FuentesDePaquetes<'_>) -> Vec<String> {
 
 pub fn configuracion(
     plan: &PlanInstalacion,
-    particiones: &[ParticionPlaneada],
+    plan_disco: &Plan,
     sector_logico: u64,
     firmware: Firmware,
     fuentes: &FuentesDePaquetes<'_>,
@@ -253,6 +271,7 @@ pub fn configuracion(
         todos.extend(fuentes.necesarios.servicios.iter().cloned());
         todos.into_iter().collect()
     };
+    let particiones = &plan_disco.particiones;
     let cifrado = particiones.iter().any(|p| p.cifrada);
 
     let mut disk_config = json!({
@@ -263,10 +282,13 @@ pub fn configuracion(
         "config_type": "default_layout",
         "device_modifications": [{
             "device": plan.disco,
-            // Borra la tabla anterior. Es el punto sin retorno, y está en una
-            // sola clave a propósito: el día que haya un modo «usar una
-            // partición existente», es esto lo que cambia a `false`.
-            "wipe": true,
+            // Borra la tabla anterior. Es el punto sin retorno.
+            //
+            // En `false` archinstall usa la tabla que ya está y respeta las
+            // particiones marcadas `existing`. En `true` la rehace de cero y
+            // todo lo demás da igual: por eso esto y las acciones de cada
+            // partición salen del mismo `Plan` y no de dos lugares distintos.
+            "wipe": plan_disco.borrar_disco,
             "partitions": particiones
                 .iter()
                 .enumerate()
@@ -506,7 +528,7 @@ pub fn ruta_plugin() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{planificar, Disco, Firmware};
+    use crate::layout::{planificar_borrando, Disco, Firmware};
     use crate::protocol::{EsquemaDisco, Secretos, SistemaArchivos};
 
     fn disco() -> Disco {
@@ -549,7 +571,7 @@ mod tests {
 
     fn config(cifrar: bool) -> Value {
         let d = disco();
-        let particiones = planificar(&d, Firmware::Uefi, SistemaArchivos::Btrfs, cifrar).unwrap();
+        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, cifrar).unwrap();
         configuracion(
             &plan(cifrar),
             &particiones,
@@ -652,7 +674,7 @@ zsh";
         let d = disco();
         for firmware in [Firmware::Uefi, Firmware::Bios] {
             for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
-                let particiones = planificar(&d, firmware, fs, false).unwrap();
+                let particiones = planificar_borrando(&d, firmware, fs, false).unwrap();
                 let c = configuracion(
                     &plan(false),
                     &particiones,
@@ -692,7 +714,7 @@ zsh";
         for firmware in [Firmware::Uefi, Firmware::Bios] {
             for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
                 let d = disco();
-                let particiones = planificar(&d, firmware, fs, false).unwrap();
+                let particiones = planificar_borrando(&d, firmware, fs, false).unwrap();
                 let c = configuracion(
                     &plan(false),
                     &particiones,
@@ -738,7 +760,7 @@ zsh";
         // `esp` en un disco que arranca por BIOS marca una partición de sistema
         // EFI que nadie va a leer.
         let d = disco();
-        let particiones = planificar(&d, Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
+        let particiones = planificar_borrando(&d, Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
         let c = configuracion(
             &plan(false),
             &particiones,
@@ -818,10 +840,11 @@ zsh";
 
         for fs in [SistemaArchivos::Ext4, SistemaArchivos::Xfs] {
             let d = disco();
-            let particiones = planificar(&d, Firmware::Uefi, fs, false).unwrap();
+            let particiones = planificar_borrando(&d, Firmware::Uefi, fs, false).unwrap();
             // Sin subvolumen `@`, archinstall ignoraría la clave: que no esté.
             assert!(
                 !particiones
+                    .particiones
                     .iter()
                     .any(|p| p.subvolumenes.iter().any(|(n, _)| *n == "@")),
                 "{fs:?}: apareció un subvolumen @ donde no debería haberlo"
@@ -869,7 +892,7 @@ zsh";
     fn los_tamanos_llevan_el_sector_del_disco() {
         let mut d = disco();
         d.sector_logico = 4096; // un disco 4Kn
-        let particiones = planificar(&d, Firmware::Uefi, SistemaArchivos::Ext4, false).unwrap();
+        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Ext4, false).unwrap();
         let c = configuracion(
             &plan(false),
             &particiones,
@@ -1010,7 +1033,7 @@ zsh";
     #[test]
     fn sin_complementos_no_se_suma_nada() {
         let d = disco();
-        let particiones = planificar(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
         let mut p = plan(false);
         p.complementos.clear();
         let c = configuracion(
