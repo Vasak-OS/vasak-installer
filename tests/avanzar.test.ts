@@ -314,3 +314,24 @@ describe('el registro', () => {
 		expect(store.registro[store.registro.length - 1].linea).toBe('línea 1199');
 	});
 });
+
+describe('el esquema de disco', () => {
+	test('el plan lleva el que se eligió y no uno fijo', () => {
+		// Estuvo escrito a mano como `'borrar_todo'` mientras fue el único. Si
+		// vuelve a quedar fijo, la pantalla ofrecería elegir y el ayudante
+		// borraría el disco igual — que es la peor forma posible de que esto
+		// falle, porque la interfaz diría que no se pierde nada.
+		const store = almacenCompleto();
+		expect(store.armarPlan().esquema).toBe('borrar_todo');
+
+		store.eleccion.esquema = 'junto_a_otro_sistema';
+		expect(store.armarPlan().esquema).toBe('junto_a_otro_sistema');
+	});
+
+	test('arranca en borrar el disco', () => {
+		// El que no puede fallar por sorpresa: en un disco vacío es lo único que
+		// tiene sentido, y es lo que el instalador venía haciendo siempre.
+		const store = useInstalacionStore();
+		expect(store.eleccion.esquema).toBe('borrar_todo');
+	});
+});

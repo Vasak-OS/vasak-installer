@@ -8,7 +8,12 @@ import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import TextInput from '@/components/ui/TextInput.vue';
-import { type Disco, type SistemaArchivos, useInstalacionStore } from '@/stores/instalacion';
+import {
+	type Disco,
+	type EsquemaDisco,
+	type SistemaArchivos,
+	useInstalacionStore,
+} from '@/stores/instalacion';
 import { formatearBytes } from '@/tools/formato';
 // Los sistemas de archivos van sin icono a propósito: el tema dibuja igual todo
 // lo que se les podría poner, y tres opciones excluyentes con el mismo icono no
@@ -21,6 +26,37 @@ const store = useInstalacionStore();
 
 /** El mínimo que exige el backend. Duplicado acá sólo para el texto del aviso. */
 const MINIMO_GIB = 20;
+
+const esquemas: { valor: EsquemaDisco; nombre: string; ayuda: string }[] = [
+	{
+		valor: 'borrar_todo',
+		nombre: 'disco.borrarTodoNombre',
+		ayuda: 'disco.borrarTodoAyuda',
+	},
+	{ valor: 'junto_a_otro_sistema', nombre: 'disco.juntoNombre', ayuda: 'disco.juntoAyuda' },
+];
+
+/**
+ * El selector sólo aparece si hay algo que conservar.
+ *
+ * En un disco vacío las dos opciones hacen lo mismo, y ofrecer una decisión que
+ * no cambia nada es pedirle a alguien que piense de más. En cuanto el disco
+ * tiene particiones, la decisión es la más importante de la pantalla.
+ */
+const hayQueElegirEsquema = computed(() => (store.discoElegido?.particiones.length ?? 0) > 0);
+
+/**
+ * Instalar al lado es sólo UEFI, y hay que decirlo antes de que lo elijan.
+ *
+ * En BIOS la tabla es MBR: cuatro particiones primarias que un equipo con otro
+ * sistema ya suele tener ocupadas, y ningún ESP que reusar. El backend lo
+ * rechaza igual, pero enterarse recién después de elegir es peor que verlo.
+ *
+ * `firmware` viene de la vista previa, que es lo que el backend detectó. Si
+ * todavía no llegó se asume que se puede: la opción se muestra y el error, si
+ * lo hay, aparece abajo.
+ */
+const soloUefi = computed(() => store.vistaPrevia?.firmware === 'bios');
 
 const sistemasDeArchivos: { valor: SistemaArchivos; nombre: string; ayuda: string }[] = [
 	{ valor: 'btrfs', nombre: 'disco.btrfsNombre', ayuda: 'disco.btrfsAyuda' },
@@ -50,7 +86,12 @@ watch(
 	// Tres fuentes y no un getter que arma un arreglo: un arreglo nuevo en cada
 	// evaluación nunca es igual al anterior, así que el observador se dispara
 	// aunque no haya cambiado nada de lo que mira.
-	[() => store.eleccion.disco, () => store.eleccion.sistemaArchivos, () => store.eleccion.cifrar],
+	[
+		() => store.eleccion.disco,
+		() => store.eleccion.esquema,
+		() => store.eleccion.sistemaArchivos,
+		() => store.eleccion.cifrar,
+	],
 	() => store.calcularVistaPrevia(),
 	{ immediate: true }
 );
@@ -160,6 +201,39 @@ onMounted(async () => {
           </button>
         </li>
       </ul>
+
+      <SectionCard v-if="hayQueElegirEsquema" :titulo="t('disco.esquema')">
+        <div role="radiogroup" :aria-label="t('disco.esquema')" class="space-y-2">
+          <OpcionRadio
+            v-for="esquema in esquemas"
+            :key="esquema.valor"
+            :seleccionada="store.eleccion.esquema === esquema.valor"
+            :label="t(esquema.nombre)"
+            :descripcion="t(esquema.ayuda)"
+            :disabled="esquema.valor === 'junto_a_otro_sistema' && soloUefi"
+            @elegir="store.eleccion.esquema = esquema.valor"
+          />
+        </div>
+
+        <p v-if="soloUefi" class="mt-2 text-tx-muted text-xs">
+          {{ t('disco.juntoSoloUefi') }}
+        </p>
+
+        <!--
+          El motivo por el que el esquema elegido no se puede aplicar: que no
+          haya hueco libre, o que la partición EFI que ya está sea demasiado
+          chica. Va acá y no en el resumen porque acá es donde se elige, y sin
+          esto la opción quedaba marcada sin que pasara nada.
+        -->
+        <AlertMessage
+          v-if="store.errorVistaPrevia"
+          tipo="aviso"
+          :titulo="t('disco.esquemaNoSePuede')"
+          class="mt-3"
+        >
+          {{ store.errorVistaPrevia }}
+        </AlertMessage>
+      </SectionCard>
 
       <SectionCard :titulo="t('disco.sistemaArchivos')">
         <!-- `radiogroup` y no tres interruptores sueltos: sólo puede haber uno

@@ -110,6 +110,15 @@ export interface VistaPrevia {
 	se_pierde: string[];
 }
 
+/**
+ * Qué hacer con el disco.
+ *
+ * `junto_a_otro_sistema` instala en el espacio libre sin tocar nada de lo que
+ * ya está, y reusa la partición EFI que exista sin formatearla — que es lo
+ * único que deja al otro sistema arrancando.
+ */
+export type EsquemaDisco = 'borrar_todo' | 'junto_a_otro_sistema';
+
 /** Un paso de la instalación, tal como lo informa el backend. */
 export interface ProgresoPaso {
 	paso: string;
@@ -160,6 +169,14 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	const discos = ref<Disco[]>([]);
 	const catalogos = ref<Catalogos>({ zonas: [], idiomas: [], teclados: [] });
 	const vistaPrevia = ref<VistaPrevia | null>(null);
+	/**
+	 * Por qué no se pudo planificar, cuando el motivo es del esquema elegido.
+	 *
+	 * Que no haya hueco libre, o que la partición EFI que ya está sea demasiado
+	 * chica, no son fallos del disco: son fallos de «instalar al lado». Hay que
+	 * decirlos, o la opción queda elegida sin que pase nada.
+	 */
+	const errorVistaPrevia = ref<string | null>(null);
 	const complementos = ref<Complementos>({
 		catalogo: [],
 		categorias: [],
@@ -178,6 +195,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		ntp: true,
 
 		disco: '',
+		esquema: 'borrar_todo' as EsquemaDisco,
 		sistemaArchivos: 'btrfs' as SistemaArchivos,
 		cifrar: false,
 		zram: true,
@@ -300,7 +318,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	function armarPlan() {
 		return {
 			disco: eleccion.disco,
-			esquema: 'borrar_todo',
+			esquema: eleccion.esquema,
 			sistema_archivos: eleccion.sistemaArchivos,
 			cifrar: eleccion.cifrar,
 			zram: eleccion.zram,
@@ -455,17 +473,25 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		try {
 			const resultado = await invoke<VistaPrevia>('vista_previa_particionado', {
 				disco: eleccion.disco,
+				esquema: eleccion.esquema,
 				sistemaArchivos: eleccion.sistemaArchivos,
 				cifrar: eleccion.cifrar,
 			});
 			if (mia !== vistaPreviaEnVuelo) return;
 			vistaPrevia.value = resultado;
-		} catch {
+			errorVistaPrevia.value = null;
+		} catch (e) {
 			if (mia !== vistaPreviaEnVuelo) return;
-			// Un disco que no se puede planificar —demasiado chico, en uso— no
-			// es un error de la aplicación: la tarjeta del disco ya lo dice, y
-			// el resumen simplemente no muestra el detalle.
 			vistaPrevia.value = null;
+			// El motivo se guarda, que antes se descartaba.
+			//
+			// Mientras el único esquema era borrar el disco, un fallo acá quería
+			// decir «este disco no sirve» y eso ya lo dice su tarjeta. Con el
+			// esquema no destructivo el fallo es del **esquema** y no del disco:
+			// que no haya hueco libre, o que la partición EFI de Windows sea de
+			// 100 MiB. Sin el motivo, la opción quedaba elegida y no pasaba
+			// nada, sin decir por qué.
+			errorVistaPrevia.value = String(e);
 		}
 	}
 
@@ -519,6 +545,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		discos,
 		catalogos,
 		vistaPrevia,
+		errorVistaPrevia,
 		ayudanteListo,
 		errorAyudante,
 		eleccion,

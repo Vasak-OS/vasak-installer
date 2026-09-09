@@ -20,6 +20,22 @@ const zona = computed(() => {
 
 const idioma = computed(() => nombreDeIdioma(store.eleccion.idiomaSistema, locale.value));
 
+/**
+ * Si el plan destruye algo.
+ *
+ * Sale de `se_pierde`, que el backend calcula **desde el plan**, y no del
+ * esquema elegido. La diferencia importa: si algún día un esquema que se
+ * presenta como no destructivo empezara a destruir algo, el cartel se pondría
+ * rojo solo en vez de seguir diciendo que no pasa nada.
+ */
+const sePierdeAlgo = computed(() => (store.vistaPrevia?.se_pierde.length ?? 0) > 0);
+
+const nombreDelEsquema = computed(() =>
+	store.eleccion.esquema === 'junto_a_otro_sistema'
+		? 'resumen.campoEsquemaJunto'
+		: 'resumen.campoEsquemaBorrarTodo'
+);
+
 const tamanoDisco = computed(() =>
 	store.discoElegido ? formatearBytes(store.discoElegido.tamano_bytes, locale.value) : '—'
 );
@@ -46,18 +62,46 @@ async function autorizar() {
         único momento en que la persona puede detenerse, y un aviso al pie de una
         página con scroll es un aviso que no se lee.
       -->
+      <!--
+        Rojo sólo cuando se pierde algo.
+        
+        Un cartel rojo de «esto no se puede deshacer» arriba de una instalación
+        que no borra nada no es prudencia: es la manera de que el rojo deje de
+        significar algo. La próxima vez que aparezca de verdad, ya nadie lo lee.
+
+        La condición mira `se_pierde`, que sale del plan, y no el esquema
+        elegido: si algún día un esquema «no destructivo» empezara a destruir
+        algo, el cartel se pondría rojo solo.
+      -->
       <AlertMessage
+        v-if="sePierdeAlgo"
         tipo="error"
         :titulo="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
       >
         <p>{{ t('resumen.aviso') }}</p>
-        <template v-if="store.vistaPrevia?.se_pierde.length">
-          <p class="mt-2 font-medium">{{ t('disco.seVaAPerder') }}</p>
-          <ul class="mt-1 space-y-0.5 font-mono">
-            <li v-for="linea in store.vistaPrevia.se_pierde" :key="linea">{{ linea }}</li>
-          </ul>
-        </template>
-        <p v-else class="mt-2">{{ t('disco.seVaAPerderVacio') }}</p>
+        <p class="mt-2 font-medium">{{ t('disco.seVaAPerder') }}</p>
+        <ul class="mt-1 space-y-0.5 font-mono">
+          <li v-for="linea in store.vistaPrevia?.se_pierde ?? []" :key="linea">{{ linea }}</li>
+        </ul>
+      </AlertMessage>
+
+      <!-- Borrando un disco que no tiene nada: no hay nada que enumerar, pero
+           la tabla se rehace igual y eso sigue siendo el punto sin retorno. -->
+      <AlertMessage
+        v-else-if="store.eleccion.esquema === 'borrar_todo'"
+        tipo="error"
+        :titulo="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
+      >
+        <p>{{ t('resumen.aviso') }}</p>
+        <p class="mt-2">{{ t('disco.seVaAPerderVacio') }}</p>
+      </AlertMessage>
+
+      <AlertMessage
+        v-else
+        tipo="info"
+        :titulo="interpolar(t('resumen.avisoJuntoTitulo'), store.eleccion.disco)"
+      >
+        {{ t('resumen.avisoJunto') }}
       </AlertMessage>
 
       <SectionCard :titulo="t('resumen.disco')">
@@ -69,7 +113,7 @@ async function autorizar() {
           </dd>
 
           <dt class="text-tx-muted">{{ t('resumen.campoEsquema') }}</dt>
-          <dd>{{ t('resumen.campoEsquemaBorrarTodo') }}</dd>
+          <dd>{{ t(nombreDelEsquema) }}</dd>
 
           <dt class="text-tx-muted">{{ t('resumen.campoSistemaArchivos') }}</dt>
           <dd class="font-mono">{{ store.eleccion.sistemaArchivos }}</dd>
