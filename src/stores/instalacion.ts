@@ -37,9 +37,20 @@ export type SistemaArchivos = 'btrfs' | 'ext4' | 'xfs';
 
 export interface ParticionExistente {
 	ruta: string;
+	/** Dónde empieza en el disco. Lo usa el planificador para los huecos. */
+	inicio_bytes: number;
 	tamano_bytes: number;
 	sistema_archivos: string | null;
 	etiqueta: string | null;
+	/** El número en la tabla de particiones: el `1` de `/dev/sda1`. */
+	numero: number | null;
+	/**
+	 * El GUID del tipo de partición en GPT.
+	 *
+	 * Es lo que identifica el ESP sin confundirlo con cualquier otra partición
+	 * FAT — un equipo con Windows suele tener además una de recuperación.
+	 */
+	tipo_particion: string | null;
 	sistema_operativo: string | null;
 }
 
@@ -117,7 +128,7 @@ export interface VistaPrevia {
  * ya está, y reusa la partición EFI que exista sin formatearla — que es lo
  * único que deja al otro sistema arrancando.
  */
-export type EsquemaDisco = 'borrar_todo' | 'junto_a_otro_sistema';
+export type EsquemaDisco = 'borrar_todo' | 'junto_a_otro_sistema' | 'sobre_una_particion';
 
 /** Un paso de la instalación, tal como lo informa el backend. */
 export interface ProgresoPaso {
@@ -196,6 +207,8 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 
 		disco: '',
 		esquema: 'borrar_todo' as EsquemaDisco,
+		/** Sobre qué partición se instala. Sólo con `sobre_una_particion`. */
+		particionDestino: '',
 		sistemaArchivos: 'btrfs' as SistemaArchivos,
 		cifrar: false,
 		zram: true,
@@ -284,6 +297,9 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	watch(
 		discoElegido,
 		(disco) => {
+			// La partición elegida es de **este** disco: al cambiar de disco no
+			// existe más, y dejarla puesta mandaría una ruta de otro disco.
+			eleccion.particionDestino = '';
 			if ((disco?.particiones.length ?? 0) === 0) {
 				eleccion.esquema = 'borrar_todo';
 			}
@@ -333,6 +349,11 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				// seguro, porque el ayudante planifica antes de tocar el disco,
 				// pero enterarse ahí es enterarse tarde.
 				if (!vistaPrevia.value || errorVistaPrevia.value) return false;
+				// Con este esquema hay que haber elegido cuál. El backend la pide
+				// igual, pero acá el botón lo puede decir antes.
+				if (eleccion.esquema === 'sobre_una_particion' && !eleccion.particionDestino) {
+					return false;
+				}
 				if (!eleccion.cifrar) return true;
 				return secretos.cifrado.length > 0 && secretos.cifrado === secretos.cifradoRepetida;
 			}
@@ -360,6 +381,11 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		return {
 			disco: eleccion.disco,
 			esquema: eleccion.esquema,
+			// Sólo cuando el esquema la usa. Mandarla siempre haría que un resto
+			// de una elección anterior viaje con un plan que no la mira, y el
+			// archivo de configuración guardado diría algo que no pasó.
+			particion_destino:
+				eleccion.esquema === 'sobre_una_particion' ? eleccion.particionDestino : null,
 			sistema_archivos: eleccion.sistemaArchivos,
 			cifrar: eleccion.cifrar,
 			zram: eleccion.zram,
@@ -518,6 +544,8 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 			const resultado = await invoke<VistaPrevia>('vista_previa_particionado', {
 				disco: eleccion.disco,
 				esquema: eleccion.esquema,
+				particionDestino:
+					eleccion.esquema === 'sobre_una_particion' ? eleccion.particionDestino : null,
 				sistemaArchivos: eleccion.sistemaArchivos,
 				cifrar: eleccion.cifrar,
 			});

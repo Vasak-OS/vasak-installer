@@ -169,6 +169,13 @@ disco:
   juntoAyuda: >-
     Usa el espacio libre y no toca las particiones que existen. Reusa la partición de arranque EFI sin formatearla, así el otro sistema sigue arrancando.
   juntoSoloUefi: "Sólo en equipos UEFI. Este arrancó por BIOS."
+  sobreNombre: "Instalar sobre una partición"
+  sobreAyuda: >-
+    Se formatea sólo la partición que elijas. Las demás no se tocan, y la
+    partición de arranque EFI se reusa sin formatearla.
+  elegirParticion: "Sobre cuál"
+  esParticionDeArranque: "Es la partición de arranque EFI"
+  particionChica: "Muy chica"
   esquemaNoSePuede: "No se puede instalar al lado en este disco"
   sistemaArchivos: Sistema de archivos
   btrfsNombre: Btrfs
@@ -349,6 +356,7 @@ resumen:
   campoEsquema: Esquema
   campoEsquemaBorrarTodo: Borrar el disco entero
   campoEsquemaJunto: "Instalar al lado de lo que ya está"
+  campoEsquemaSobre: "Instalar sobre una partición"
   avisoJuntoTitulo: "No se va a borrar nada de {0}"
   avisoJunto: >-
     Se instala en el espacio libre. Las particiones que ya están no se tocan, y

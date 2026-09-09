@@ -30,11 +30,13 @@ const idioma = computed(() => nombreDeIdioma(store.eleccion.idiomaSistema, local
  */
 const sePierdeAlgo = computed(() => (store.vistaPrevia?.se_pierde.length ?? 0) > 0);
 
-const nombreDelEsquema = computed(() =>
-	store.eleccion.esquema === 'junto_a_otro_sistema'
-		? 'resumen.campoEsquemaJunto'
-		: 'resumen.campoEsquemaBorrarTodo'
-);
+const NOMBRE_DEL_ESQUEMA = {
+	borrar_todo: 'resumen.campoEsquemaBorrarTodo',
+	junto_a_otro_sistema: 'resumen.campoEsquemaJunto',
+	sobre_una_particion: 'resumen.campoEsquemaSobre',
+} as const;
+
+const nombreDelEsquema = computed(() => NOMBRE_DEL_ESQUEMA[store.eleccion.esquema]);
 
 const tamanoDisco = computed(() =>
 	store.discoElegido ? formatearBytes(store.discoElegido.tamano_bytes, locale.value) : '—'

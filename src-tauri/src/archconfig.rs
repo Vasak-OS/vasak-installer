@@ -548,6 +548,7 @@ mod tests {
         PlanInstalacion {
             disco: "/dev/nvme0n1".into(),
             esquema: EsquemaDisco::BorrarTodo,
+            particion_destino: None,
             sistema_archivos: SistemaArchivos::Btrfs,
             cifrar,
             zram: true,

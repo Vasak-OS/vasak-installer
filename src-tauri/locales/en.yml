@@ -168,6 +168,13 @@ disco:
   juntoAyuda: >-
     Uses the free space and leaves the existing partitions alone. It reuses the EFI boot partition without formatting it, so the other system keeps booting.
   juntoSoloUefi: "UEFI machines only. This one booted through BIOS."
+  sobreNombre: "Install onto a partition"
+  sobreAyuda: >-
+    Only the partition you pick gets formatted. The rest are left alone, and the
+    EFI boot partition is reused without formatting it.
+  elegirParticion: "Which one"
+  esParticionDeArranque: "This is the EFI boot partition"
+  particionChica: "Too small"
   esquemaNoSePuede: "This disk cannot take an alongside install"
   sistemaArchivos: File system
   btrfsNombre: Btrfs
@@ -349,6 +356,7 @@ resumen:
   campoEsquema: Scheme
   campoEsquemaBorrarTodo: Erase the whole disk
   campoEsquemaJunto: "Install alongside what is already there"
+  campoEsquemaSobre: "Install onto a partition"
   avisoJuntoTitulo: "Nothing on {0} will be erased"
   avisoJunto: >-
     It installs into the free space. The existing partitions are left alone, and

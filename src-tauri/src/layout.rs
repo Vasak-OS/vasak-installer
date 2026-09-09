@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::SistemaArchivos;
+use crate::protocol::{EsquemaDisco, SistemaArchivos};
 
 /// Un MiB en bytes.
 const MIB: u64 = 1024 * 1024;
@@ -253,6 +253,18 @@ pub enum ErrorPlan {
     /// tabla es MBR, que admite cuatro particiones primarias y ya suele
     /// tenerlas ocupadas, y no hay ESP que reusar.
     SoloUefi,
+    /// Se pidió instalar sobre una partición que el disco no tiene. El sondeo
+    /// es de antes: alguien pudo haber cambiado el disco en el medio.
+    ParticionNoEsta { ruta: String },
+    /// La partición elegida no empieza ni termina en un MiB entero.
+    ///
+    /// archinstall la borra y la rehace con `optimalAlignedConstraint`, así que
+    /// no la puede reproducir tal cual: la correría, y correrla es meterse en la
+    /// de al lado. Se rechaza en vez de mover nada.
+    ParticionDesalineada { ruta: String },
+    /// Se pidió instalar sobre el ESP. Formatearlo como raíz deja al equipo sin
+    /// partición de arranque, y de paso borra el cargador del otro sistema.
+    ParticionEsElEsp { ruta: String },
 }
 
 impl std::fmt::Display for ErrorPlan {
@@ -281,6 +293,17 @@ impl std::fmt::Display for ErrorPlan {
             ErrorPlan::SoloUefi => write!(
                 f,
                 "instalar junto a otro sistema sólo está disponible en equipos UEFI"
+            ),
+            ErrorPlan::ParticionNoEsta { ruta } => {
+                write!(f, "el disco ya no tiene la partición {ruta}")
+            }
+            ErrorPlan::ParticionDesalineada { ruta } => write!(
+                f,
+                "la partición {ruta} no empieza y termina en un MiB entero, y rehacerla la movería"
+            ),
+            ErrorPlan::ParticionEsElEsp { ruta } => write!(
+                f,
+                "{ruta} es la partición de arranque EFI: usarla como raíz dejaría el equipo sin arrancar"
             ),
         }
     }
@@ -559,6 +582,118 @@ fn huecos_libres(disco: &Disco) -> Vec<Hueco> {
     huecos
 }
 
+/// Lo que se comprueba del disco antes de cualquier plan.
+///
+/// El tamaño mínimo no está acá: en los modos no destructivos lo que tiene que
+/// entrar es la raíz, que es más chica que el disco.
+fn comprobar_disco(disco: &Disco) -> Result<(), ErrorPlan> {
+    if disco.tamano_bytes == 0 || disco.sector_logico == 0 {
+        return Err(ErrorPlan::Invalido);
+    }
+    if disco.en_uso {
+        return Err(ErrorPlan::EnUso);
+    }
+    Ok(())
+}
+
+/// El ESP del plan: el que ya está si sirve, o uno nuevo al principio del hueco.
+///
+/// Está separado porque los dos modos no destructivos lo necesitan igual, y
+/// porque es la decisión de la que depende que el otro sistema siga arrancando.
+/// Duplicarla sería tener dos lugares donde equivocarse en eso.
+///
+/// Devuelve además cuántos MiB del hueco se usaron: cero si se reusó uno que ya
+/// existe, y `ARRANQUE_MIB` si hubo que crearlo.
+fn esp_del_plan(disco: &Disco, hueco: Hueco) -> Result<(ParticionPlaneada, u64), ErrorPlan> {
+    let comun = |accion, ruta, inicio_mib, tamano_mib| ParticionPlaneada {
+        inicio_mib,
+        tamano_mib,
+        sistema_archivos: Some("fat32"),
+        punto_montaje: Some("/boot"),
+        // El ESP es FAT y FAT no tiene permisos: sin `umask` queda legible por
+        // cualquiera, y ahí están el kernel y el initramfs.
+        opciones_montaje: vec!["umask=0077".into()],
+        banderas: vec!["boot", "esp"],
+        subvolumenes: Vec::new(),
+        // El ESP **nunca** va cifrado: el firmware tiene que poder leerlo.
+        cifrada: false,
+        rol: Rol::Esp,
+        accion,
+        ruta,
+    };
+
+    match disco.particiones.iter().find(|p| p.es_esp()) {
+        Some(esp) => {
+            let mib = esp.tamano_bytes / MIB;
+            if mib < MINIMO_ESP_REUSABLE_MIB {
+                return Err(ErrorPlan::EspChico {
+                    tiene_mib: mib,
+                    minimo_mib: MINIMO_ESP_REUSABLE_MIB,
+                });
+            }
+            // `Conservar` es lo único que archinstall no formatea, y formatear
+            // el ESP ajeno es borrarle el cargador al otro sistema. La
+            // geometría va tal como está porque no se la va a tocar; se manda
+            // igual porque archinstall la pide.
+            Ok((
+                comun(
+                    Accion::Conservar,
+                    Some(esp.ruta.clone()),
+                    esp.inicio_bytes / MIB,
+                    mib,
+                ),
+                0,
+            ))
+        }
+        // Sin ESP no hay nada que reusar: un disco con un Linux viejo en MBR, o
+        // uno con datos y nada más.
+        None => {
+            if hueco.tamano_mib < ARRANQUE_MIB {
+                return Err(ErrorPlan::SinEspacioLibre {
+                    mayor_hueco_gib: hueco.tamano_mib / 1024,
+                });
+            }
+            Ok((
+                comun(Accion::Crear, None, hueco.inicio_mib, ARRANQUE_MIB),
+                ARRANQUE_MIB,
+            ))
+        }
+    }
+}
+
+/// La partición raíz del plan, con lo que cambia según el sistema de archivos.
+fn raiz_del_plan(
+    disco: &Disco,
+    fs: SistemaArchivos,
+    cifrar: bool,
+    inicio_mib: u64,
+    tamano_mib: u64,
+    accion: Accion,
+    ruta: Option<String>,
+) -> ParticionPlaneada {
+    let usa_subvolumenes = fs == SistemaArchivos::Btrfs;
+    ParticionPlaneada {
+        inicio_mib,
+        tamano_mib,
+        sistema_archivos: Some(fs.como_archinstall()),
+        // Con subvolúmenes el punto de montaje lo lleva `@`. Poner los dos hace
+        // que archinstall monte la partición cruda en `/` y después los
+        // subvolúmenes encima, y el sistema termina instalado fuera de `@`.
+        punto_montaje: if usa_subvolumenes { None } else { Some("/") },
+        opciones_montaje: opciones_de_montaje(fs, disco),
+        banderas: Vec::new(),
+        subvolumenes: if usa_subvolumenes {
+            SUBVOLUMENES.to_vec()
+        } else {
+            Vec::new()
+        },
+        cifrada: cifrar,
+        rol: Rol::Raiz,
+        accion,
+        ruta,
+    }
+}
+
 /// Arma el plan para instalar **en el espacio libre**, sin tocar lo que ya está.
 ///
 /// Es lo contrario de `planificar`: ahí el disco queda vacío y el plan lo llena;
@@ -579,113 +714,38 @@ pub fn planificar_junto_a(
     fs: SistemaArchivos,
     cifrar: bool,
 ) -> Result<Plan, ErrorPlan> {
-    if disco.tamano_bytes == 0 || disco.sector_logico == 0 {
-        return Err(ErrorPlan::Invalido);
-    }
-    if disco.en_uso {
-        return Err(ErrorPlan::EnUso);
-    }
+    comprobar_disco(disco)?;
     if firmware != Firmware::Uefi {
         return Err(ErrorPlan::SoloUefi);
     }
 
-    // El ESP de quien ya vive en el disco.
-    let esp_existente = disco.particiones.iter().find(|p| p.es_esp());
-    if let Some(esp) = esp_existente {
-        let mib = esp.tamano_bytes / MIB;
-        if mib < MINIMO_ESP_REUSABLE_MIB {
-            return Err(ErrorPlan::EspChico {
-                tiene_mib: mib,
-                minimo_mib: MINIMO_ESP_REUSABLE_MIB,
-            });
-        }
-    }
-
-    let huecos = huecos_libres(disco);
-    let mayor = huecos.first().copied().unwrap_or(Hueco {
+    let mayor = huecos_libres(disco).first().copied().unwrap_or(Hueco {
         inicio_mib: INICIO_MIB,
         tamano_mib: 0,
     });
 
-    // Lo que hace falta en el hueco: la raíz, más el ESP si hay que crearlo.
-    let arranque_en_el_hueco = if esp_existente.is_some() {
-        0
-    } else {
-        ARRANQUE_MIB
-    };
-    let minimo_mib = MINIMO_GIB * 1024 + arranque_en_el_hueco;
-    if mayor.tamano_mib < minimo_mib {
+    let (esp, gastado) = esp_del_plan(disco, mayor)?;
+
+    // Lo que queda del hueco después del ESP tiene que alcanzar para la raíz.
+    let para_la_raiz = mayor.tamano_mib.saturating_sub(gastado);
+    if para_la_raiz < MINIMO_GIB * 1024 {
         return Err(ErrorPlan::SinEspacioLibre {
             mayor_hueco_gib: mayor.tamano_mib / 1024,
         });
     }
 
-    let mut plan = Vec::with_capacity(2);
-    let mut cursor = mayor.inicio_mib;
-
-    match esp_existente {
-        // Se monta y no se formatea. Es la diferencia entera entre un dual boot
-        // que anda y un Windows que ya no arranca.
-        Some(esp) => plan.push(ParticionPlaneada {
-            // La geometría es la que tiene: no se recalcula nada, porque no se
-            // la va a tocar. Se manda igual porque archinstall la pide.
-            inicio_mib: esp.inicio_bytes / MIB,
-            tamano_mib: esp.tamano_bytes / MIB,
-            // El que ya tiene. Formatearlo es exactamente lo que no se hace,
-            // así que esto es sólo lo que se le informa a archinstall para que
-            // sepa montarlo.
-            sistema_archivos: Some("fat32"),
-            punto_montaje: Some("/boot"),
-            opciones_montaje: vec!["umask=0077".into()],
-            banderas: vec!["boot", "esp"],
-            subvolumenes: Vec::new(),
-            cifrada: false,
-            rol: Rol::Esp,
-            accion: Accion::Conservar,
-            ruta: Some(esp.ruta.clone()),
-        }),
-        // No hay ninguno: hay que hacerlo, y va al principio del hueco.
-        None => {
-            plan.push(ParticionPlaneada {
-                inicio_mib: cursor,
-                tamano_mib: ARRANQUE_MIB,
-                sistema_archivos: Some("fat32"),
-                punto_montaje: Some("/boot"),
-                opciones_montaje: vec!["umask=0077".into()],
-                banderas: vec!["boot", "esp"],
-                subvolumenes: Vec::new(),
-                cifrada: false,
-                rol: Rol::Esp,
-                accion: Accion::Crear,
-                ruta: None,
-            });
-            cursor += ARRANQUE_MIB;
-        }
-    }
-
-    let tamano_raiz = mayor
-        .inicio_mib
-        .saturating_add(mayor.tamano_mib)
-        .saturating_sub(cursor);
-
-    let usa_subvolumenes = fs == SistemaArchivos::Btrfs;
-    plan.push(ParticionPlaneada {
-        inicio_mib: cursor,
-        tamano_mib: tamano_raiz,
-        sistema_archivos: Some(fs.como_archinstall()),
-        punto_montaje: if usa_subvolumenes { None } else { Some("/") },
-        opciones_montaje: opciones_de_montaje(fs, disco),
-        banderas: Vec::new(),
-        subvolumenes: if usa_subvolumenes {
-            SUBVOLUMENES.to_vec()
-        } else {
-            Vec::new()
-        },
-        cifrada: cifrar,
-        rol: Rol::Raiz,
-        accion: Accion::Crear,
-        ruta: None,
-    });
+    let mut plan = vec![
+        esp,
+        raiz_del_plan(
+            disco,
+            fs,
+            cifrar,
+            mayor.inicio_mib + gastado,
+            para_la_raiz,
+            Accion::Crear,
+            None,
+        ),
+    ];
 
     // El plan queda en orden de posición en el disco. Con el ESP reusado eso no
     // es el orden en que se armó: un ESP de Windows está al principio y el
@@ -699,6 +759,124 @@ pub fn planificar_junto_a(
         borrar_disco: false,
         particiones: plan,
     })
+}
+
+/// Arma el plan para instalar **sobre una partición que ya existe**, formateando
+/// **sólo esa**.
+///
+/// Es el caso de quien tiene un disco repartido y quiere entregarle una de las
+/// particiones a VasakOS: no hay hueco libre que buscar, hay una partición
+/// elegida a mano y todo lo demás se queda como está.
+///
+/// Sólo UEFI, por lo mismo que `planificar_junto_a`: en BIOS haría falta además
+/// formatear otra partición como `/boot`, o sea elegir dos, y eso ya es
+/// particionado manual.
+///
+/// La partición se marca `Formatear`, que en archinstall es `modify`: la borra,
+/// la rehace **con la misma geometría** y la formatea. De ahí sale la única
+/// condición rara de esta función — que la partición esté alineada a 1 MiB—,
+/// porque para rehacerla archinstall usa `optimalAlignedConstraint` y una
+/// partición desalineada no la puede reproducir donde estaba: la correría, y
+/// correrla es meterse en la de al lado.
+pub fn planificar_sobre(
+    disco: &Disco,
+    particion: &str,
+    firmware: Firmware,
+    fs: SistemaArchivos,
+    cifrar: bool,
+) -> Result<Plan, ErrorPlan> {
+    comprobar_disco(disco)?;
+    if firmware != Firmware::Uefi {
+        return Err(ErrorPlan::SoloUefi);
+    }
+
+    let destino = disco
+        .particiones
+        .iter()
+        .find(|p| p.ruta == particion)
+        .ok_or_else(|| ErrorPlan::ParticionNoEsta {
+            ruta: particion.to_string(),
+        })?;
+
+    // El ESP no: formatearlo como raíz deja el equipo sin partición de arranque
+    // y de paso le borra el cargador al otro sistema. Es un error de la interfaz
+    // si llega acá, y se corta igual.
+    if destino.es_esp() {
+        return Err(ErrorPlan::ParticionEsElEsp {
+            ruta: particion.to_string(),
+        });
+    }
+
+    if destino.inicio_bytes % MIB != 0 || destino.tamano_bytes % MIB != 0 {
+        return Err(ErrorPlan::ParticionDesalineada {
+            ruta: particion.to_string(),
+        });
+    }
+
+    let tiene_gib = destino.tamano_bytes / (1024 * MIB);
+    if tiene_gib < MINIMO_GIB {
+        return Err(ErrorPlan::Chico {
+            tiene_gib,
+            minimo_gib: MINIMO_GIB,
+        });
+    }
+
+    // El ESP puede necesitar hueco, si el disco no tiene ninguno. El hueco que
+    // se le ofrece es el mayor **que no sea la partición elegida**: ésa ya está
+    // ocupada por la raíz.
+    let mayor = huecos_libres(disco).first().copied().unwrap_or(Hueco {
+        inicio_mib: INICIO_MIB,
+        tamano_mib: 0,
+    });
+    let (esp, _) = esp_del_plan(disco, mayor)?;
+
+    let mut plan = vec![
+        esp,
+        raiz_del_plan(
+            disco,
+            fs,
+            cifrar,
+            destino.inicio_bytes / MIB,
+            destino.tamano_bytes / MIB,
+            Accion::Formatear,
+            Some(destino.ruta.clone()),
+        ),
+    ];
+    plan.sort_by_key(|p| p.inicio_mib);
+
+    Ok(Plan {
+        borrar_disco: false,
+        particiones: plan,
+    })
+}
+
+/// El plan que corresponde al esquema elegido.
+///
+/// **El único despacho.** Existía en dos lados —la vista previa y el ayudante—
+/// y eso es lo único que podría hacer que la pantalla muestre un plan y se
+/// ejecute otro. Con una sola función, mostrar y hacer no se pueden separar.
+///
+/// `particion` sólo se mira con `SobreUnaParticion`, y ahí es obligatoria.
+pub fn planificar_con(
+    disco: &Disco,
+    esquema: EsquemaDisco,
+    particion: Option<&str>,
+    firmware: Firmware,
+    fs: SistemaArchivos,
+    cifrar: bool,
+) -> Result<Plan, ErrorPlan> {
+    match esquema {
+        EsquemaDisco::BorrarTodo => planificar_borrando(disco, firmware, fs, cifrar),
+        EsquemaDisco::JuntoAOtroSistema => planificar_junto_a(disco, firmware, fs, cifrar),
+        EsquemaDisco::SobreUnaParticion => {
+            // Sin partición no hay nada que decidir, y adivinar cuál sería lo
+            // peor que se puede hacer acá.
+            let ruta = particion.ok_or_else(|| ErrorPlan::ParticionNoEsta {
+                ruta: String::new(),
+            })?;
+            planificar_sobre(disco, ruta, firmware, fs, cifrar)
+        }
+    }
 }
 
 /// El plan para borrar el disco entero, con la misma forma que el otro.
@@ -1001,6 +1179,271 @@ mod tests {
         assert_eq!(esp.ruta, None);
         assert_eq!(esp.tamano_mib, ARRANQUE_MIB);
         assert!(plan.a_destruir(&disco).is_empty());
+    }
+
+    /// **Instalar sobre una partición formatea ésa y sólo ésa.**
+    ///
+    /// La red de seguridad del modo, dicha como corresponde: no «el plan parece
+    /// correcto», sino «la lista de lo que se pierde es exactamente la
+    /// partición que se eligió». Una de más es un dato ajeno borrado; una de
+    /// menos es un cartel que miente.
+    #[test]
+    fn sobre_una_particion_se_pierde_esa_y_nada_mas() {
+        for fs in [
+            SistemaArchivos::Btrfs,
+            SistemaArchivos::Ext4,
+            SistemaArchivos::Xfs,
+        ] {
+            for cifrar in [false, true] {
+                let disco = disco_con_windows(500, 512);
+                let plan =
+                    planificar_sobre(&disco, "/dev/sda3", Firmware::Uefi, fs, cifrar).unwrap();
+
+                let victimas: Vec<&str> = plan
+                    .a_destruir(&disco)
+                    .iter()
+                    .map(|p| p.ruta.as_str())
+                    .collect();
+                assert_eq!(victimas, ["/dev/sda3"], "{fs:?}/{cifrar}");
+                assert!(!plan.borrar_disco, "{fs:?}/{cifrar}");
+
+                let raiz = plan
+                    .particiones
+                    .iter()
+                    .find(|p| p.rol == Rol::Raiz)
+                    .unwrap_or_else(|| panic!("{fs:?}/{cifrar}: el plan quedó sin raíz"));
+                assert_eq!(raiz.accion, Accion::Formatear, "{fs:?}/{cifrar}");
+                assert_eq!(raiz.ruta.as_deref(), Some("/dev/sda3"), "{fs:?}/{cifrar}");
+                assert_eq!(raiz.cifrada, cifrar, "{fs:?}/{cifrar}");
+
+                // Y la geometría, tal cual. `modify` en archinstall borra la
+                // partición y la rehace con lo que diga el plan: un número
+                // distinto acá la mueve, y moverla es meterse en la de al lado.
+                let destino = disco
+                    .particiones
+                    .iter()
+                    .find(|p| p.ruta == "/dev/sda3")
+                    .unwrap();
+                assert_eq!(raiz.inicio_mib * MIB, destino.inicio_bytes, "{fs:?}/{cifrar}");
+                assert_eq!(raiz.tamano_mib * MIB, destino.tamano_bytes, "{fs:?}/{cifrar}");
+
+                // El ESP de Windows se conserva, igual que en el otro modo.
+                let esp = plan.particiones.iter().find(|p| p.rol == Rol::Esp).unwrap();
+                assert_eq!(esp.accion, Accion::Conservar, "{fs:?}/{cifrar}");
+            }
+        }
+    }
+
+    /// **No se puede instalar sobre el ESP.**
+    ///
+    /// Formatearlo como raíz deja el equipo sin partición de arranque y de paso
+    /// le borra el cargador al otro sistema. La interfaz no debería ofrecerlo,
+    /// y por eso mismo el plan tiene que rechazarlo: lo que impide un desastre
+    /// no puede depender de que la pantalla esté bien.
+    #[test]
+    fn no_se_puede_instalar_sobre_el_esp() {
+        let disco = disco_con_windows(500, 512);
+        assert_eq!(
+            planificar_sobre(
+                &disco,
+                "/dev/sda1",
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::ParticionEsElEsp {
+                ruta: "/dev/sda1".into()
+            }
+        );
+    }
+
+    /// **Una partición desalineada se rechaza en vez de moverse.**
+    ///
+    /// archinstall la borra y la rehace con `optimalAlignedConstraint`, así que
+    /// no la puede poner donde estaba: la correría. Y correr una partición es
+    /// escribir encima de la de al lado. Además el plan trabaja en MiB enteros,
+    /// así que ni siquiera podría representarla.
+    #[test]
+    fn una_particion_desalineada_no_se_toca() {
+        let mut disco = disco_con_windows(500, 512);
+        // Como la deja una tabla vieja hecha por otra herramienta: empieza a
+        // mitad de un MiB.
+        disco.particiones[2].inicio_bytes += 512;
+        assert_eq!(
+            planificar_sobre(
+                &disco,
+                "/dev/sda3",
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::ParticionDesalineada {
+                ruta: "/dev/sda3".into()
+            }
+        );
+    }
+
+    /// **Una partición que ya no está, una demasiado chica, y BIOS.**
+    #[test]
+    fn sobre_una_particion_comprueba_lo_que_le_dan() {
+        let disco = disco_con_windows(500, 512);
+        assert_eq!(
+            planificar_sobre(
+                &disco,
+                "/dev/sda9",
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::ParticionNoEsta {
+                ruta: "/dev/sda9".into()
+            }
+        );
+
+        // `C:` ocupa la mitad del disco: en uno de 500 GiB son 250 y entra; en
+        // uno de 30, quince, y no.
+        let chico = disco_con_windows(30, 512);
+        match planificar_sobre(
+            &chico,
+            "/dev/sda3",
+            Firmware::Uefi,
+            SistemaArchivos::Btrfs,
+            false,
+        ) {
+            Err(ErrorPlan::Chico { tiene_gib, .. }) => assert!(tiene_gib < MINIMO_GIB),
+            otro => panic!("se esperaba Chico y salió {otro:?}"),
+        }
+
+        assert_eq!(
+            planificar_sobre(
+                &disco,
+                "/dev/sda3",
+                Firmware::Bios,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::SoloUefi
+        );
+    }
+
+    /// **Sobre una partición, en un disco que no tiene ESP.**
+    ///
+    /// Es la rama de `planificar_sobre` que **crea** el ESP, y no la tocaba
+    /// ningún test: todos los discos de prueba ya traían uno. Un disco con un
+    /// Linux viejo en MBR es exactamente este caso.
+    ///
+    /// Lo que importa es que el ESP nuevo caiga en espacio libre: si cayera
+    /// encima de una partición ajena, archinstall lo aceptaría —sólo valida
+    /// solapamientos entre las que crea— y el estropicio se vería en el disco.
+    #[test]
+    fn sobre_una_particion_sin_esp_crea_uno_en_el_hueco() {
+        let mut disco = disco_de(500);
+        let mib = MIB;
+        disco.particiones = vec![
+            // Un `/boot` viejo de 1 GiB al principio.
+            ParticionExistente {
+                ruta: "/dev/sda1".into(),
+                inicio_bytes: mib,
+                tamano_bytes: 1024 * mib,
+                sistema_archivos: Some("ext4".into()),
+                etiqueta: Some("boot".into()),
+                numero: Some(1),
+                tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+                sistema_operativo: None,
+            },
+            // Y la raíz del Linux viejo, que es la que se va a reusar.
+            ParticionExistente {
+                ruta: "/dev/sda2".into(),
+                inicio_bytes: 1025 * mib,
+                tamano_bytes: 100 * 1024 * mib,
+                sistema_archivos: Some("ext4".into()),
+                etiqueta: Some("raiz vieja".into()),
+                numero: Some(2),
+                tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+                sistema_operativo: Some("Debian 12".into()),
+            },
+        ];
+
+        let plan =
+            planificar_sobre(&disco, "/dev/sda2", Firmware::Uefi, SistemaArchivos::Btrfs, false)
+                .unwrap();
+
+        let esp = plan.particiones.iter().find(|p| p.rol == Rol::Esp).unwrap();
+        assert_eq!(esp.accion, Accion::Crear);
+        assert_eq!(esp.ruta, None);
+        assert_eq!(esp.tamano_mib, ARRANQUE_MIB);
+
+        // El ESP nuevo no puede caer encima de nada de lo que ya está.
+        let inicio = esp.inicio_mib * mib;
+        let fin = inicio + esp.tamano_mib * mib;
+        for e in &disco.particiones {
+            assert!(
+                fin <= e.inicio_bytes || inicio >= e.fin_bytes(),
+                "el ESP nuevo [{inicio}, {fin}) pisa {} [{}, {})",
+                e.ruta,
+                e.inicio_bytes,
+                e.fin_bytes()
+            );
+        }
+        assert!(fin <= disco.tamano_bytes - mib, "se mete en la copia del GPT");
+
+        // Y se pierde la raíz vieja, que es lo que se eligió, y sólo eso: el
+        // `/boot` viejo queda intacto aunque ya no sirva para nada.
+        let victimas: Vec<&str> = plan
+            .a_destruir(&disco)
+            .iter()
+            .map(|p| p.ruta.as_str())
+            .collect();
+        assert_eq!(victimas, ["/dev/sda2"]);
+    }
+
+    /// **Los dos modos no destructivos tratan el ESP igual.**
+    ///
+    /// Es lo que hace que reusar el ESP ajeno sea una decisión y no dos. Se
+    /// comprueba comparando los planes, no leyendo el código: si alguien
+    /// separa las dos ramas, acá se ve.
+    #[test]
+    fn los_modos_no_destructivos_tratan_el_esp_igual() {
+        let disco = disco_con_windows(500, 512);
+        let a = planificar_junto_a(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let b = planificar_sobre(
+            &disco,
+            "/dev/sda3",
+            Firmware::Uefi,
+            SistemaArchivos::Btrfs,
+            false,
+        )
+        .unwrap();
+
+        let esp_de = |p: &Plan| {
+            p.particiones
+                .iter()
+                .find(|x| x.rol == Rol::Esp)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(esp_de(&a), esp_de(&b));
+
+        // Y el de 100 MiB no sirve en ninguno de los dos.
+        let flaco = disco_con_windows(500, 100);
+        assert!(matches!(
+            planificar_junto_a(&flaco, Firmware::Uefi, SistemaArchivos::Btrfs, false),
+            Err(ErrorPlan::EspChico { .. })
+        ));
+        assert!(matches!(
+            planificar_sobre(
+                &flaco,
+                "/dev/sda3",
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            ),
+            Err(ErrorPlan::EspChico { .. })
+        ));
     }
 
     /// **Los huecos se calculan alineados y sin morder lo ajeno.**
