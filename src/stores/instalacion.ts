@@ -15,7 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { defineStore } from 'pinia';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 /** Los pasos del asistente, en orden. Es la fuente del sidebar. */
 export const PASOS = [
@@ -263,6 +263,38 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 
 	const discoElegido = computed(() => discos.value.find((d) => d.ruta === eleccion.disco) ?? null);
 
+	/**
+	 * El esquema vuelve a «borrar el disco» cuando el elegido no tiene nada.
+	 *
+	 * La pantalla esconde el selector en ese caso —no hay nada que conservar—
+	 * pero esconderlo no deselecciona: elegir «al lado» en un disco con Windows
+	 * y después cambiar a un disco vacío dejaba la elección pegada. El plan
+	 * salía con `wipe: false`, o sea que archinstall usaba la tabla de
+	 * particiones que hubiera en el disco en vez de rehacerla, y el resumen
+	 * mostraba el cartel de «no se borra nada» sobre un disco que se iba a
+	 * repartir entero.
+	 *
+	 * Va acá y no en la vista porque el disco también se elige solo: hay una
+	 * preselección al arrancar, y un arreglo en la pantalla no la alcanzaría.
+	 *
+	 * Sólo en un sentido. Volver a un disco con particiones **no** vuelve a
+	 * poner «al lado»: normalizar no puede significar adivinar, y elegir por
+	 * alguien qué hacer con un Windows es justamente lo que no hay que hacer.
+	 */
+	watch(
+		discoElegido,
+		(disco) => {
+			if ((disco?.particiones.length ?? 0) === 0) {
+				eleccion.esquema = 'borrar_todo';
+			}
+		},
+		// Sincrónico y no en el ciclo de Vue: entre que se elige el disco y que
+		// corre un observador diferido hay una ventana en la que `eleccion`
+		// dice una cosa y la pantalla otra. `armarPlan()` lee `eleccion`
+		// directo, así que esa ventana alcanza para mandar el esquema viejo.
+		{ flush: 'sync' }
+	);
+
 	const discosUsables = computed(() => discos.value.filter((d) => !d.en_uso));
 
 	/**
@@ -292,6 +324,15 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				// máquina con un solo disco de 16 GiB quedaba elegido, el botón
 				// habilitado, y el rechazo llegaba recién al apretar Instalar.
 				if (discoElegido.value.tamano_bytes < MINIMO_GIB * 1024 ** 3) return false;
+				// El plan tiene que estar calculado y tiene que haber salido.
+				//
+				// Sin esto, un esquema que el disco no admite —la partición EFI
+				// de 100 MiB de un Windows, o un hueco libre que no alcanza—
+				// mostraba el motivo y dejaba el botón habilitado igual: la
+				// instalación arrancaba y moría al planificar. Falla del lado
+				// seguro, porque el ayudante planifica antes de tocar el disco,
+				// pero enterarse ahí es enterarse tarde.
+				if (!vistaPrevia.value || errorVistaPrevia.value) return false;
 				if (!eleccion.cifrar) return true;
 				return secretos.cifrado.length > 0 && secretos.cifrado === secretos.cifradoRepetida;
 			}
@@ -468,6 +509,9 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		const mia = ++vistaPreviaEnVuelo;
 		if (!eleccion.disco) {
 			vistaPrevia.value = null;
+			// También el motivo: si no, uno viejo seguiría bloqueando el paso
+			// después de cambiar de disco.
+			errorVistaPrevia.value = null;
 			return;
 		}
 		try {
