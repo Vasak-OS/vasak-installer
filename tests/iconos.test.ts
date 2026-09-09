@@ -38,6 +38,16 @@ const TEMAS = [
 ];
 
 /**
+ * Los que traen los iconos que se comprueban acá.
+ *
+ * `Adwaita` y `hicolor` son el respaldo: aportan un puñado de nombres genéricos
+ * y ninguno de los nuestros. Separarlos importa para saber cuándo saltear: una
+ * máquina de integración sin escritorio igual trae `hicolor`, así que «hay algo
+ * en /usr/share/icons» no dice nada. Lo que decide es si está el tema nuestro.
+ */
+const TEMAS_VASAK = TEMAS.filter((ruta) => ruta.includes('VasakOS'));
+
+/**
  * Nombre de icono → todas las rutas donde aparece.
  *
  * Se guardan las rutas y no sólo los nombres porque **la carpeta y el sufijo son
@@ -120,10 +130,17 @@ function existe(nombre: string): boolean {
 }
 
 describe('los iconos que nombra el instalador', () => {
-	// Sin ningún tema instalado no hay nada contra qué comparar; los tests se
+	// Sin el tema instalado no hay nada contra qué comparar; los tests se
 	// saltean en lugar de fallar, que es lo que corresponde en una máquina de
 	// integración sin escritorio.
-	const hayTema = RUTAS.size > 0;
+	//
+	// La condición mira **el tema nuestro** y no que el inventario tenga algo.
+	// Esa era la versión anterior y no alcanzaba: el corredor de integración
+	// trae `hicolor` y `Adwaita`, así que el inventario salía con cientos de
+	// nombres, la guarda daba verdadero, y los seis tests que buscan iconos de
+	// VasakOS fallaban todos por lo mismo — no porque un nombre estuviera mal,
+	// sino porque el tema no estaba.
+	const hayTema = TEMAS_VASAK.some(existsSync);
 
 	test('el tema está instalado y se pudo leer', () => {
 		if (!hayTema) return;
