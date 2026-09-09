@@ -478,11 +478,11 @@ mod tests {
         const MIB: u64 = 1024 * 1024;
         for firmware in [Firmware::Uefi, Firmware::Bios] {
             for fs in [SistemaArchivos::Btrfs, SistemaArchivos::Ext4] {
-                let plan = layout::planificar(&disco, firmware, fs, false).unwrap();
-                let vista = vista_previa_de(&disco, firmware, &plan);
+                let plan = layout::planificar_borrando(&disco, firmware, fs, false).unwrap();
+                let vista = vista_previa_de(&disco, firmware, &plan.particiones);
 
-                assert_eq!(vista.particiones.len(), plan.len());
-                for (previa, real) in vista.particiones.iter().zip(plan.iter()) {
+                assert_eq!(vista.particiones.len(), plan.particiones.len());
+                for (previa, real) in vista.particiones.iter().zip(plan.particiones.iter()) {
                     assert_eq!(previa.inicio_bytes, real.inicio_mib * MIB);
                     assert_eq!(previa.tamano_bytes, real.tamano_mib * MIB);
                     assert_eq!(previa.sistema_archivos.as_deref(), real.sistema_archivos);
@@ -511,8 +511,8 @@ mod tests {
             en_uso: false,
             particiones: Vec::new(),
         };
-        let plan = layout::planificar(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true).unwrap();
-        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
+        let plan = layout::planificar_borrando(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true).unwrap();
+        let vista = vista_previa_de(&disco, Firmware::Uefi, &plan.particiones);
 
         assert!(!vista.particiones[0].cifrada, "el ESP nunca va cifrado");
         assert!(vista.particiones[1].cifrada, "la raíz sí");

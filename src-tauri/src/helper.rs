@@ -40,8 +40,8 @@ use crate::conflictos::{self, Choque};
 use crate::layout;
 use crate::probe;
 use crate::protocol::{
-    CuerpoPeticion, EstadoPaso, Mensaje, Nivel, Paso, Peticion, PlanInstalacion, Progreso,
-    Resultado,
+    CuerpoPeticion, EsquemaDisco, EstadoPaso, Mensaje, Nivel, Paso, Peticion, PlanInstalacion,
+    Progreso, Resultado,
 };
 use crate::teclado;
 
@@ -418,8 +418,19 @@ fn instalar(
         .ok_or_else(|| format!("el disco {} ya no está", plan.disco))?;
 
     let firmware = probe::detectar_firmware();
-    let particiones = layout::planificar(disco, firmware, plan.sistema_archivos, plan.cifrar)
-        .map_err(|e| e.to_string())?;
+    // El plan sale del esquema elegido, y **es el único lugar donde se decide
+    // si el disco se borra**. Lo que se destruye lo declara el propio plan
+    // (`Plan::a_destruir`), así que un modo nuevo no puede olvidarse de
+    // declararlo: si no lo declara, no lo puede tocar.
+    let plan_disco = match plan.esquema {
+        EsquemaDisco::BorrarTodo => {
+            layout::planificar_borrando(disco, firmware, plan.sistema_archivos, plan.cifrar)
+        }
+        EsquemaDisco::JuntoAOtroSistema => {
+            layout::planificar_junto_a(disco, firmware, plan.sistema_archivos, plan.cifrar)
+        }
+    }
+    .map_err(|e| e.to_string())?;
 
     let hash_usuario = hashear(&plan.secretos.usuario)?;
     let hash_root = if plan.root_habilitado {
@@ -515,7 +526,7 @@ fn instalar(
 
     let config = archconfig::configuracion(
         plan,
-        &particiones,
+        &plan_disco,
         disco.sector_logico,
         firmware,
         &archconfig::FuentesDePaquetes {

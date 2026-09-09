@@ -167,6 +167,18 @@ struct NodoLsblk {
     log_sec: Option<u64>,
     fstype: Option<String>,
     label: Option<String>,
+    /// Dónde empieza la partición, **en sectores de 512 bytes**. Lo dice así
+    /// `lsblk --list-columns`, y es siempre 512 aunque el disco sea 4Kn: el
+    /// valor sale de `/sys/class/block/<x>/start`, que el kernel expresa
+    /// siempre en esa unidad. Por eso acá no se usa `log-sec` para convertir.
+    start: Option<u64>,
+    /// El número de la partición tal como está en la tabla: el `1` de
+    /// `/dev/sda1`. Se pide en vez de recortarlo de la ruta, que falla en
+    /// `/dev/nvme0n1p1` y en los dispositivos por mapper.
+    partn: Option<u32>,
+    /// El GUID del tipo de partición en GPT. Es lo que identifica un ESP —
+    /// `c12a7328-…` — sin confundirlo con cualquier otra partición FAT.
+    parttype: Option<String>,
     /// Una lista, con entradas `null` para los puntos que no están montados.
     #[serde(default)]
     mountpoints: Vec<Option<String>>,
@@ -189,7 +201,8 @@ impl NodoLsblk {
 
 /// Los campos que se le piden a `lsblk`. En una constante para que la lista de
 /// campos y la estructura de arriba se lean juntas.
-const CAMPOS_LSBLK: &str = "PATH,PKNAME,TYPE,SIZE,MODEL,ROTA,LOG-SEC,FSTYPE,LABEL,MOUNTPOINTS";
+const CAMPOS_LSBLK: &str =
+    "PATH,PKNAME,TYPE,SIZE,MODEL,ROTA,LOG-SEC,FSTYPE,LABEL,MOUNTPOINTS,START,PARTN,PARTTYPE";
 
 /// Prefijos de dispositivos que `lsblk` informa como `disk` y no son discos.
 ///
@@ -229,12 +242,23 @@ pub fn sondear_discos() -> Result<Vec<Disco>, String> {
     let parseada: SalidaLsblk = serde_json::from_slice(&salida.stdout)
         .map_err(|e| format!("no se entendió la salida de lsblk: {e}"))?;
 
+    Ok(discos_desde(&parseada))
+}
+
+/// Los discos que salen de una salida de `lsblk` ya parseada.
+///
+/// Separado de la ejecución del comando por lo mismo que `anotar_desde`: acá
+/// hay decisiones —qué es un disco, cómo se asocia una partición, cómo se
+/// convierten las unidades— que se pueden probar con una entrada escrita a
+/// mano, y de otro modo sólo se probarían contra el disco de quien corra los
+/// tests. Un disco 4Kn, por ejemplo, no lo tiene nadie acá.
+fn discos_desde(parseada: &SalidaLsblk) -> Vec<Disco> {
     let mut planos = Vec::new();
     for nodo in &parseada.blockdevices {
         aplanar(nodo, &mut planos);
     }
 
-    Ok(planos
+    planos
         .iter()
         .filter(|n| n.tipo.as_deref() == Some("disk"))
         .filter(|n| {
@@ -242,7 +266,7 @@ pub fn sondear_discos() -> Result<Vec<Disco>, String> {
             !PSEUDO_DISCOS.iter().any(|p| ruta.starts_with(p))
         })
         .map(|disco| convertir_disco(disco, &planos))
-        .collect())
+        .collect()
 }
 
 fn aplanar<'a>(nodo: &'a NodoLsblk, salida: &mut Vec<&'a NodoLsblk>) {
@@ -287,9 +311,16 @@ fn convertir_disco(nodo: &NodoLsblk, todos: &[&NodoLsblk]) -> Disco {
         .filter(|h| h.tipo.as_deref() == Some("part"))
         .map(|h| ParticionExistente {
             ruta: h.path.clone().unwrap_or_default(),
+            // 512 y no `log-sec`: `START` viene siempre en sectores de 512
+            // bytes, incluso en discos 4Kn. Multiplicar por el sector lógico
+            // daría ocho veces el desplazamiento real en un 4Kn, y con eso el
+            // plan pondría una partición encima de otra.
+            inicio_bytes: h.start.unwrap_or(0).saturating_mul(512),
             tamano_bytes: h.size.unwrap_or(0),
             sistema_archivos: h.fstype.clone(),
             etiqueta: h.label.clone(),
+            numero: h.partn,
+            tipo_particion: h.parttype.clone(),
             sistema_operativo: None,
         })
         .collect();
@@ -521,9 +552,12 @@ mod tests {
                 .iter()
                 .map(|r| ParticionExistente {
                     ruta: (*r).to_string(),
+                    inicio_bytes: 0,
                     tamano_bytes: 1024,
                     sistema_archivos: None,
                     etiqueta: None,
+                    numero: None,
+                    tipo_particion: None,
                     sistema_operativo: None,
                 })
                 .collect(),
@@ -703,7 +737,138 @@ mod tests {
                 d.sector_logico
             );
             assert!(!d.modelo.is_empty(), "{} salió sin modelo", d.ruta);
+
+            // Los campos nuevos, que son los que el particionado no destructivo
+            // usa para encontrar los huecos. Un `START` que no llegue —porque
+            // alguna versión de `lsblk` no lo tenga, o porque se escriba mal el
+            // nombre de la columna— daría cero, y cero significa «empieza en el
+            // sector 0», que es donde está la tabla de particiones. El plan
+            // creería que todo el disco está libre.
+            for p in &d.particiones {
+                assert!(
+                    p.inicio_bytes > 0,
+                    "{}: sin desplazamiento de inicio",
+                    p.ruta
+                );
+                // 1 MiB es donde arranca la primera partición de cualquier
+                // tabla alineada, y el hueco del MBR en las que no lo están.
+                assert!(
+                    p.inicio_bytes >= 1024 * 1024,
+                    "{}: empieza en {} bytes, encima de la tabla",
+                    p.ruta,
+                    p.inicio_bytes
+                );
+                assert!(
+                    p.fin_bytes() <= d.tamano_bytes,
+                    "{}: termina en {} y el disco tiene {}",
+                    p.ruta,
+                    p.fin_bytes(),
+                    d.tamano_bytes
+                );
+                assert!(p.numero.is_some_and(|n| n > 0), "{}: sin número", p.ruta);
+            }
+
+            // Las particiones no se pisan entre sí. Si se pisaran, el error
+            // estaría en cómo se leyó `START` —convertir con el sector lógico
+            // en vez de con 512 da justo esto en un disco 4Kn— y no en el
+            // disco.
+            let mut ordenadas: Vec<_> = d.particiones.iter().collect();
+            ordenadas.sort_by_key(|p| p.inicio_bytes);
+            for par in ordenadas.windows(2) {
+                assert!(
+                    par[0].fin_bytes() <= par[1].inicio_bytes,
+                    "{} termina en {} y {} empieza en {}",
+                    par[0].ruta,
+                    par[0].fin_bytes(),
+                    par[1].ruta,
+                    par[1].inicio_bytes
+                );
+            }
         }
+    }
+
+    /// **En un disco 4Kn el desplazamiento no se convierte con el sector
+    /// lógico.**
+    ///
+    /// `START` viene siempre en sectores de 512 bytes, lo diga el disco que lo
+    /// diga: sale de `/sys/class/block/<x>/start`, que el kernel expresa
+    /// siempre en esa unidad. Multiplicarlo por `log-sec` da ocho veces el
+    /// desplazamiento real, y con eso el plan calcularía los huecos libres en
+    /// el lugar equivocado — o sea, escribiría encima de datos ajenos.
+    ///
+    /// Va con una salida escrita a mano porque ninguna máquina de las que
+    /// corren estos tests tiene un disco 4Kn: contra el disco de acá los dos
+    /// cálculos dan lo mismo y el error pasaría entero.
+    #[test]
+    fn en_un_disco_4kn_el_inicio_no_se_multiplica_por_el_sector_logico() {
+        let json = r#"{
+            "blockdevices": [
+                {
+                    "path": "/dev/sda", "pkname": null, "type": "disk",
+                    "size": 1000000000000, "model": "4Kn", "rota": false,
+                    "log-sec": 4096, "fstype": null, "label": null,
+                    "mountpoints": [null], "start": null, "partn": null,
+                    "parttype": null,
+                    "children": [
+                        {
+                            "path": "/dev/sda1", "pkname": "sda", "type": "part",
+                            "size": 536870912, "model": null, "rota": false,
+                            "log-sec": 4096, "fstype": "vfat", "label": "ESP",
+                            "mountpoints": [null], "start": 2048, "partn": 1,
+                            "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let parseada: SalidaLsblk = serde_json::from_str(json).unwrap();
+        let discos = discos_desde(&parseada);
+        assert_eq!(discos.len(), 1);
+        let p = &discos[0].particiones[0];
+
+        // 2048 sectores de 512 = 1 MiB. Con el sector lógico daría 8 MiB.
+        assert_eq!(
+            p.inicio_bytes,
+            1024 * 1024,
+            "el inicio se convirtió con el sector lógico y no con 512"
+        );
+        assert_eq!(p.numero, Some(1));
+        assert!(p.es_esp());
+        assert_eq!(discos[0].sector_logico, 4096);
+    }
+
+    /// El ESP se reconoce por su GUID y no por tener FAT adentro.
+    ///
+    /// Es la comprobación que decide si el particionado no destructivo reusa
+    /// una partición o la formatea. Un equipo con Windows suele tener además
+    /// una partición FAT de recuperación: confundirla con el ESP y formatearla
+    /// borra justo lo que se venía a conservar.
+    #[test]
+    fn el_esp_se_reconoce_por_el_guid() {
+        let mut p = ParticionExistente {
+            ruta: "/dev/sda1".into(),
+            inicio_bytes: 1024 * 1024,
+            tamano_bytes: 512 * 1024 * 1024,
+            sistema_archivos: Some("vfat".into()),
+            etiqueta: None,
+            numero: Some(1),
+            tipo_particion: None,
+            sistema_operativo: None,
+        };
+        assert!(!p.es_esp(), "FAT sin GUID no es un ESP");
+
+        // El de recuperación de Windows: también FAT, otro GUID.
+        p.tipo_particion = Some("de94bba4-06d1-4d40-a16a-bfd50179d6ac".into());
+        assert!(!p.es_esp(), "la partición de recuperación no es el ESP");
+
+        p.tipo_particion = Some("c12a7328-f81f-11d2-ba4b-00a0c93ec93b".into());
+        assert!(p.es_esp());
+
+        // `lsblk` lo informa en minúscula, pero el GUID no distingue mayúsculas
+        // y hay herramientas que lo escriben al revés.
+        p.tipo_particion = Some("C12A7328-F81F-11D2-BA4B-00A0C93EC93B".into());
+        assert!(p.es_esp(), "el GUID no distingue mayúsculas");
     }
 
     /// Ningún dispositivo que no sea un disco de verdad se puede colar como

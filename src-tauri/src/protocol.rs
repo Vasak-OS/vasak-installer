@@ -124,6 +124,10 @@ impl std::fmt::Debug for Secretos {
 pub enum EsquemaDisco {
     /// Borra el disco entero y arma la tabla de cero.
     BorrarTodo,
+    /// Instala en el espacio libre, sin tocar lo que ya está en el disco. El
+    /// ESP que exista se reusa sin formatearlo, que es lo que deja al otro
+    /// sistema arrancando.
+    JuntoAOtroSistema,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
