@@ -29,12 +29,13 @@ const COMPROBACION: &str = r#"
 import json, sys
 from pathlib import Path
 from archinstall.lib.models.device import (
-    FilesystemType, ModificationStatus, PartitionFlag, PartitionModification,
-    PartitionType, Size, SubvolumeModification,
+    BtrfsOptions, FilesystemType, ModificationStatus, PartitionFlag,
+    PartitionModification, PartitionType, Size, SubvolumeModification,
 )
 
 problemas = []
 cfg = json.loads(sys.stdin.read())
+modificaciones = []
 for partition in cfg["disk_config"]["device_modifications"][0]["partitions"]:
     nombre = partition["obj_id"]
     # `from_string` devuelve None para lo que archinstall no conoce, y `parse_arg`
@@ -66,6 +67,76 @@ for partition in cfg["disk_config"]["device_modifications"][0]["partitions"]:
 
     if not mod.start.is_valid_start():
         problemas.append(f"{nombre}: empieza en un lugar que archinstall rechaza")
+
+    modificaciones.append(mod)
+
+# Las instantáneas.
+#
+# `setup_btrfs_snapshot` —el que instala snapper y grub-btrfs, que es lo que
+# pone las instantáneas en el menú de arranque— corre sólo si se dan **las dos**
+# cosas: que el JSON traiga `btrfs_options.snapshot_config`, y que
+# `has_default_btrfs_vols()` sea cierto.
+#
+# Lo primero se comprueba acá contra el propio `BtrfsOptions.parse_arg`.
+btrfs_arg = cfg["disk_config"].get("btrfs_options")
+pedimos_instantaneas = False
+if btrfs_arg is not None:
+    opciones = BtrfsOptions.parse_arg(btrfs_arg)
+    if opciones is None or opciones.snapshot_config is None:
+        problemas.append(f"btrfs_options: archinstall lo descarta entero: {btrfs_arg}")
+    else:
+        pedimos_instantaneas = True
+
+# Lo segundo **hoy no se puede dar**, y no por nada nuestro.
+#
+# `SubvolumeModification.parse_args` guarda el nombre tal como viene del JSON,
+# que es un `str`; `is_default_root()` lo compara contra `Path('@')`. Un `str`
+# nunca es igual a un `Path`, así que da falso siempre. El menú interactivo no
+# lo sufre porque ahí los subvolúmenes se arman con `SubvolumeModification(
+# Path('@'), Path('/'))` (disk_menu.py:588). O sea: en cualquier instalación
+# guiada por un archivo de configuración —la nuestra— archinstall no arma las
+# instantáneas, mande uno lo que mande.
+#
+# Por eso `vasak-desktop-settings` las arma por su cuenta. La clave se manda
+# igual: es correcta, no cuesta nada, y el día que arreglen esto arriba empieza
+# a funcionar sola.
+#
+# Y ese día hay que enterarse, porque entonces sobra nuestro armado y quedarían
+# los dos. Esta línea es el aviso: se imprime cuando la puerta se abre.
+#
+# El cuerpo es el de `has_default_btrfs_vols`, evaluado sobre los objetos de
+# archinstall que ya construimos: `DiskLayoutConfiguration` no se puede armar
+# sin enumerar discos, que pide root.
+archinstall_las_haria = any(
+    m.is_create_or_modify()
+    and m.fs_type == FilesystemType.BTRFS
+    and any(s.is_default_root() for s in m.btrfs_subvols)
+    for m in modificaciones
+)
+if archinstall_las_haria:
+    problemas.append(
+        "UPSTREAM ARREGLADO: has_default_btrfs_vols ya da verdadero. archinstall "
+        "arma snapper y grub-btrfs solo; sacar el armado propio de "
+        "vasak-desktop-settings.install antes de que queden los dos."
+    )
+
+# Y el contrato al revés: si el plan trae la raíz btrfs con `@` montado en `/`,
+# el JSON **tiene** que pedir las instantáneas. Es la mitad que importa —la otra
+# comprobación sólo dice que lo que mandamos está bien formado, no que lo
+# mandemos cuando corresponde—.
+#
+# Se mira el JSON crudo y no `is_default_root()` sobre los objetos de
+# archinstall, porque eso hoy da falso siempre por el problema de arriba: usarlo
+# acá haría que esta comprobación no comprobara nada.
+hay_raiz_btrfs_default = any(
+    p.get("fs_type") == "btrfs"
+    and any(s["name"] == "@" and s["mountpoint"] == "/" for s in p.get("btrfs", []))
+    for p in cfg["disk_config"]["device_modifications"][0]["partitions"]
+)
+if hay_raiz_btrfs_default and not pedimos_instantaneas:
+    problemas.append("hay raíz btrfs con @ en / y el JSON no pide instantáneas")
+if pedimos_instantaneas and not hay_raiz_btrfs_default:
+    problemas.append("el JSON pide instantáneas y no hay raíz btrfs con @ en /")
 
 print("\n".join(problemas))
 "#;
