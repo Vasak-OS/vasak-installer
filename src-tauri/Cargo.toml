@@ -71,6 +71,10 @@ toml = "0.8"
 # de tener una NVIDIA y una AMD en la misma máquina de pruebas, y el código que
 # elige qué controlador proponer es justamente el que no puede estar sin probar.
 tempfile = "3"
+# Pruebas de propiedad sobre los analizadores que leen entrada ajena. El de
+# os-prober es el caso: corre como root, monta particiones que no son nuestras
+# y lee lo que haya adentro.
+proptest = "1"
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en
 # tiempo de ejecución y **paniquea** si no puede, así que un error de sintaxis no
 # se ve hasta que la aplicación no arranca.

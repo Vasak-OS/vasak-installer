@@ -336,16 +336,41 @@ pub fn anotar_sistemas_operativos(discos: &mut [Disco]) {
         return;
     }
 
-    // Cada línea es `ruta:nombre largo:etiqueta corta:tipo`, con `:` como
-    // separador. El nombre puede tener `:` adentro, así que se parte por la
-    // izquierda una sola vez y el resto se toma como el nombre hasta el
-    // siguiente separador — que es exactamente lo que hace os-prober al armarlo.
     let texto = String::from_utf8_lossy(&salida.stdout);
+    anotar_desde(discos, &texto);
+}
+
+/// Aplica a los discos lo que dijo `os-prober`.
+///
+/// Separado del comando para poder probarlo: esto interpreta texto que sale de
+/// **particiones ajenas**, montadas para mirarlas adentro, así que la entrada la
+/// eligió alguien más. Un pendrive con un nombre de sistema operativo
+/// preparado a mano es entrada hostil, y el único lugar donde eso se puede
+/// comprobar sin un disco de verdad es acá.
+///
+/// Cada línea es `ruta:nombre largo:etiqueta corta:tipo`, con `:` como
+/// separador, y se parte en cuatro. El nombre es el segundo campo y termina en
+/// el `:` siguiente; los `:` que sobren caen todos en el cuarto, que no se usa.
+///
+/// O sea que un nombre que traiga `:` adentro llega cortado. Es a propósito y
+/// es lo que hace cualquiera que lea esta salida: son cuatro campos y el
+/// separador no viene escapado, así que no hay forma de distinguir un `:` del
+/// nombre de uno de la estructura. Cortar en el segundo es preferible a mover
+/// el corte y que el nombre se coma la etiqueta y el tipo.
+///
+/// Lo que no tenga esa forma se saltea en vez de abortar la lectura entera: una
+/// línea rara de una partición no puede hacer que las demás queden sin anotar.
+pub fn anotar_desde(discos: &mut [Disco], texto: &str) {
     for linea in texto.lines() {
         let mut partes = linea.splitn(4, ':');
         let (Some(ruta), Some(nombre)) = (partes.next(), partes.next()) else {
             continue;
         };
+        // Una ruta vacía casaría con cualquier partición que también la tenga
+        // vacía, y anotaría un sistema operativo donde no lo hay.
+        if ruta.is_empty() {
+            continue;
+        }
         for disco in discos.iter_mut() {
             for particion in disco.particiones.iter_mut() {
                 if particion.ruta == ruta {
@@ -481,6 +506,160 @@ fn recorrer_teclados(dir: &std::path::Path, salida: &mut BTreeSet<String>) {
 
 #[cfg(test)]
 mod tests {
+    use crate::layout::{Disco, ParticionExistente};
+
+    fn un_disco(rutas: &[&str]) -> Disco {
+        Disco {
+            ruta: "/dev/sda".into(),
+            modelo: "Prueba".into(),
+            tamano_bytes: 500 * 1024 * 1024 * 1024,
+            sector_logico: 512,
+            rotacional: false,
+            nvme: false,
+            en_uso: false,
+            particiones: rutas
+                .iter()
+                .map(|r| ParticionExistente {
+                    ruta: (*r).to_string(),
+                    tamano_bytes: 1024,
+                    sistema_archivos: None,
+                    etiqueta: None,
+                    sistema_operativo: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn sistemas(disco: &Disco) -> Vec<Option<String>> {
+        disco
+            .particiones
+            .iter()
+            .map(|p| p.sistema_operativo.clone())
+            .collect()
+    }
+
+    /// La salida que da `os-prober` de verdad.
+    ///
+    /// Cuatro campos separados por `:` — ruta, nombre largo, etiqueta corta y
+    /// tipo— y el nombre largo lleva `:` adentro cuando el sistema tiene dos
+    /// puntos en su nombre, que es justo el caso que rompe un `split` ingenuo.
+    #[test]
+    fn se_anota_el_sistema_operativo_de_cada_particion() {
+        let mut discos = vec![un_disco(&["/dev/sda1", "/dev/sda2", "/dev/sda3"])];
+        anotar_desde(
+            &mut discos,
+            "/dev/sda1:Windows Boot Manager:Windows:chain\n\
+             /dev/sda3:Ubuntu 24.04.1 LTS (24.04):Ubuntu:linux\n",
+        );
+        assert_eq!(
+            sistemas(&discos[0]),
+            vec![
+                Some("Windows Boot Manager".to_string()),
+                None,
+                Some("Ubuntu 24.04.1 LTS (24.04)".to_string()),
+            ]
+        );
+    }
+
+    /// Un nombre con `:` adentro llega cortado, y eso está bien.
+    ///
+    /// El separador no viene escapado, así que no hay forma de distinguir un
+    /// `:` del nombre de uno de la estructura. Se corta en el segundo campo:
+    /// preferible a mover el corte y que el nombre se coma la etiqueta y el
+    /// tipo. Queda escrito acá porque a la próxima persona le va a parecer un
+    /// error — a mí me lo pareció, y escribí esta prueba al revés antes de
+    /// correrla.
+    #[test]
+    fn un_nombre_con_dos_puntos_se_corta_en_el_primero() {
+        let mut discos = vec![un_disco(&["/dev/sda1"])];
+        anotar_desde(&mut discos, "/dev/sda1:Fedora: Workstation 41:Fedora:linux");
+        assert_eq!(sistemas(&discos[0]), vec![Some("Fedora".to_string())]);
+    }
+
+    /// Y los `:` de más caen en el cuarto campo, que no se mira.
+    #[test]
+    fn los_separadores_de_mas_no_corren_los_campos() {
+        let mut discos = vec![un_disco(&["/dev/sda1"])];
+        anotar_desde(&mut discos, "/dev/sda1:Windows:Windows:chain:extra:mas");
+        assert_eq!(sistemas(&discos[0]), vec![Some("Windows".to_string())]);
+    }
+
+    /// Una línea rota no se lleva puestas a las demás.
+    ///
+    /// Es entrada de particiones ajenas: alcanza con una con basura para que,
+    /// abortando, el resumen no avise de ningún sistema operativo y alguien
+    /// borre un Windows creyendo que el disco estaba vacío.
+    #[test]
+    fn una_linea_rota_no_descarta_a_las_otras() {
+        let mut discos = vec![un_disco(&["/dev/sda1", "/dev/sda2"])];
+        anotar_desde(
+            &mut discos,
+            "sin separadores ni nada\n\
+             \n\
+             /dev/sda2:Debian GNU/Linux:Debian:linux\n",
+        );
+        assert_eq!(
+            sistemas(&discos[0]),
+            vec![None, Some("Debian GNU/Linux".to_string())]
+        );
+    }
+
+    /// Una ruta vacía no anota nada.
+    ///
+    /// Sin esto, una línea que empieza con `:` casaría con cualquier partición
+    /// cuya ruta también estuviera vacía y le colgaría un sistema operativo que
+    /// no existe.
+    #[test]
+    fn una_ruta_vacia_no_casa_con_nada() {
+        let mut discos = vec![un_disco(&["", "/dev/sda1"])];
+        anotar_desde(&mut discos, ":Inventado:X:linux");
+        assert_eq!(sistemas(&discos[0]), vec![None, None]);
+    }
+
+    /// Nombrar una partición que no existe no hace nada.
+    #[test]
+    fn una_ruta_desconocida_se_ignora() {
+        let mut discos = vec![un_disco(&["/dev/sda1"])];
+        anotar_desde(&mut discos, "/dev/sdz9:Lo que sea:X:linux");
+        assert_eq!(sistemas(&discos[0]), vec![None]);
+    }
+
+    proptest::proptest! {
+        /// Ningún texto, venga como venga, hace caer al analizador.
+        ///
+        /// Sale del fuzzing de los analizadores privilegiados que pide
+        /// Vasak-OS/website#5. Este corre como root —os-prober necesita montar
+        /// para mirar— y lee lo que haya adentro de discos que no son nuestros.
+        #[test]
+        fn anotar_desde_nunca_entra_en_panico(texto in ".{0,400}") {
+            let mut discos = vec![un_disco(&["/dev/sda1", "/dev/sda2"])];
+            anotar_desde(&mut discos, &texto);
+        }
+
+        /// Ni un texto con forma de salida de os-prober y los campos al voleo,
+        /// que es lo que una cadena al azar casi nunca alcanza a producir.
+        #[test]
+        fn una_salida_con_forma_de_os_prober_tampoco(
+            ruta in ".{0,40}",
+            nombre in ".{0,60}",
+            corto in ".{0,20}",
+            tipo in ".{0,20}",
+        ) {
+            let mut discos = vec![un_disco(&["/dev/sda1"])];
+            anotar_desde(&mut discos, &format!("{ruta}:{nombre}:{corto}:{tipo}"));
+        }
+
+        /// Y el nombre que se anota nunca sale de la nada: si algo quedó
+        /// anotado, es porque la ruta casaba exactamente.
+        #[test]
+        fn solo_se_anota_lo_que_casa(sufijo in "[a-z0-9]{0,6}") {
+            let mut discos = vec![un_disco(&["/dev/sda1"])];
+            anotar_desde(&mut discos, &format!("/dev/sda1{sufijo}:Algo:X:linux"));
+            let esperado = if sufijo.is_empty() { Some("Algo".to_string()) } else { None };
+            proptest::prop_assert_eq!(sistemas(&discos[0]), vec![esperado]);
+        }
+    }
+
     use super::*;
 
     #[test]
