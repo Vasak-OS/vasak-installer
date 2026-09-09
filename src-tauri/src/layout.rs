@@ -82,11 +82,43 @@ pub struct Disco {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticionExistente {
     pub ruta: String,
+    /// Dónde empieza en el disco. Hace falta para dos cosas que antes no se
+    /// hacían: encontrar los huecos libres, y decirle a archinstall que no
+    /// toque lo que ya está.
+    #[serde(default)]
+    pub inicio_bytes: u64,
     pub tamano_bytes: u64,
     pub sistema_archivos: Option<String>,
     pub etiqueta: Option<String>,
+    /// El número en la tabla de particiones. Sólo para los mensajes.
+    #[serde(default)]
+    pub numero: Option<u32>,
+    /// El GUID del tipo de partición en GPT.
+    #[serde(default)]
+    pub tipo_particion: Option<String>,
     /// Lo que se pudo averiguar del sistema operativo que vive ahí, si hay uno.
     pub sistema_operativo: Option<String>,
+}
+
+/// El GUID que GPT le da a la partición de sistema EFI.
+///
+/// Se compara contra esto y no contra `fstype == "vfat"`: un equipo con Windows
+/// suele tener además una partición FAT de recuperación o de datos, y
+/// formatearla creyendo que era el ESP borra justo lo que se venía a conservar.
+const GUID_ESP: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
+
+impl ParticionExistente {
+    /// Si es la partición de sistema EFI.
+    pub fn es_esp(&self) -> bool {
+        self.tipo_particion
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case(GUID_ESP))
+    }
+
+    /// El byte siguiente al último que ocupa.
+    pub fn fin_bytes(&self) -> u64 {
+        self.inicio_bytes.saturating_add(self.tamano_bytes)
+    }
 }
 
 /// El firmware del equipo. Decide si hay ESP o si no hay partición de arranque.
