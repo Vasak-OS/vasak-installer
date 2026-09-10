@@ -38,6 +38,13 @@ const esquemas: { valor: EsquemaDisco; nombre: string; ayuda: string }[] = [
 	{ valor: 'sobre_una_particion', nombre: 'disco.sobreNombre', ayuda: 'disco.sobreAyuda' },
 ];
 
+/** Cómo se llama cada rol en la vista previa. */
+const ROL_PARTICION: Record<string, string> = {
+	esp: 'disco.rolEsp',
+	raiz: 'disco.rolRaiz',
+	datos: 'disco.rolDatos',
+};
+
 /** El GUID que GPT le da a la partición de sistema EFI. */
 const GUID_ESP = 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b';
 
@@ -355,7 +362,7 @@ onMounted(async () => {
             <div class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 font-medium">
                 <IconoSistema :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
-                {{ particion.rol === 'esp' ? t('disco.rolEsp') : t('disco.rolRaiz') }}
+                {{ t(ROL_PARTICION[particion.rol] ?? 'disco.rolRaiz') }}
               </span>
               <span class="font-mono text-xs">{{ tamano(particion.tamano_bytes) }}</span>
             </div>

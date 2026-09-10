@@ -22,10 +22,12 @@ use std::process::Command;
 use vasak_installer_lib::archconfig::{configuracion, FuentesDePaquetes};
 use vasak_installer_lib::complementos::Aporte;
 use vasak_installer_lib::layout::{
-    planificar_borrando, planificar_junto_a, planificar_sobre, Disco, Firmware,
-    ParticionExistente,
+    planificar_borrando, planificar_junto_a, planificar_manual, planificar_sobre, Disco,
+    Firmware, ParticionExistente,
 };
-use vasak_installer_lib::protocol::{EsquemaDisco, PlanInstalacion, Secretos, SistemaArchivos};
+use vasak_installer_lib::protocol::{
+    AsignacionManual, EsquemaDisco, PlanInstalacion, Secretos, SistemaArchivos,
+};
 
 /// Lo que `parse_arg` hace con cada partición, y lo que después le pide.
 const COMPROBACION: &str = r#"
@@ -210,6 +212,7 @@ fn plan(fs: SistemaArchivos, cifrar: bool) -> PlanInstalacion {
         disco: "/dev/vda".into(),
         esquema: EsquemaDisco::BorrarTodo,
         particion_destino: None,
+        asignaciones: Vec::new(),
         sistema_archivos: fs,
         cifrar,
         zram: true,
@@ -402,6 +405,102 @@ fn archinstall_acepta_el_plan_que_formatea_una_particion() {
             assert!(
                 salida.is_empty(),
                 "archinstall rechaza el plan sobre una partición de {fs:?} (cifrado: {cifrar}):\n{salida}"
+            );
+        }
+    }
+}
+
+/// **Y que acepte un plan armado a mano.**
+///
+/// Estrena la combinación que ningún otro modo produce: una partición
+/// `existing` **con punto de montaje** —un `/home` que se conserva y se monta—
+/// y un `fs_type` que no salió de nosotros sino de `lsblk`. Ahí es donde un
+/// nombre mal traducido (`vfat` en vez de `fat32`) hace que archinstall
+/// rechace el archivo entero.
+#[test]
+fn archinstall_acepta_un_plan_manual() {
+    if !hay_archinstall() {
+        eprintln!("archinstall no está instalado: se saltea");
+        return;
+    }
+
+    let mut d = disco_con_windows();
+    // Una tercera partición para el /home que se conserva.
+    let mib = 1024 * 1024;
+    let ultima = d.particiones.last().unwrap().clone();
+    d.particiones.push(ParticionExistente {
+        ruta: "/dev/vda3".into(),
+        inicio_bytes: ultima.inicio_bytes + ultima.tamano_bytes,
+        tamano_bytes: 21 * 1024 * mib,
+        sistema_archivos: Some("ext4".into()),
+        etiqueta: Some("home".into()),
+        numero: Some(3),
+        tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+        sistema_operativo: None,
+    });
+
+    let asignar = |ruta: &str, punto: &str, formatear: bool| AsignacionManual {
+        particion: ruta.into(),
+        punto_montaje: Some(punto.into()),
+        formatear,
+    };
+
+    for fs in [SistemaArchivos::Ext4, SistemaArchivos::Btrfs] {
+        for cifrar in [false, true] {
+            let asignaciones = vec![
+                // El ESP de Windows: se conserva y se monta.
+                asignar("/dev/vda1", "/boot", false),
+                // La de Windows pasa a ser la raíz.
+                asignar("/dev/vda2", "/", true),
+                // Y un /home que ya existe, que se conserva con lo que tenga.
+                asignar("/dev/vda3", "/home", false),
+            ];
+            let plan_disco =
+                planificar_manual(&d, &asignaciones, Firmware::Uefi, fs, cifrar).unwrap();
+
+            // Sólo se pierde la que se formatea.
+            let victimas: Vec<&str> = plan_disco
+                .a_destruir(&d)
+                .iter()
+                .map(|p| p.ruta.as_str())
+                .collect();
+            assert_eq!(victimas, ["/dev/vda2"], "{fs:?}/{cifrar}");
+
+            let c = configuracion(
+                &plan(fs, cifrar),
+                &plan_disco,
+                d.sector_logico,
+                Firmware::Uefi,
+                &FuentesDePaquetes {
+                    escritorio: &["base".to_string()],
+                    aporte: &Aporte::default(),
+                    necesarios: &Default::default(),
+                },
+                Some("4.4.0"),
+            );
+
+            let particiones = c["disk_config"]["device_modifications"][0]["partitions"]
+                .as_array()
+                .unwrap();
+            let home = particiones
+                .iter()
+                .find(|p| p["dev_path"] == "/dev/vda3")
+                .unwrap_or_else(|| panic!("{fs:?}/{cifrar}: el /home no está en el JSON"));
+            assert_eq!(home["status"], "existing", "{fs:?}/{cifrar}");
+            assert_eq!(home["mountpoint"], "/home", "{fs:?}/{cifrar}");
+            // El nombre que archinstall conoce, no el de `lsblk`.
+            assert_eq!(home["fs_type"], "ext4", "{fs:?}/{cifrar}");
+
+            let esp = particiones
+                .iter()
+                .find(|p| p["dev_path"] == "/dev/vda1")
+                .unwrap();
+            assert_eq!(esp["fs_type"], "fat32", "{fs:?}/{cifrar}: quedó como vfat");
+
+            let salida = ejecutar(&serde_json::to_string(&c).unwrap());
+            assert!(
+                salida.is_empty(),
+                "archinstall rechaza el plan manual de {fs:?} (cifrado: {cifrar}):\n{salida}"
             );
         }
     }

@@ -104,6 +104,10 @@ export function iconoDeDisco(disco: { nvme: boolean; rotacional: boolean }): str
 export const ICONO_ROL_PARTICION: Record<string, string> = {
 	esp: 'system-shutdown',
 	raiz: 'drive-harddisk',
+	// Sólo aparece en el modo manual: una partición que se monta en otro lado,
+	// como `/home`. Va con el icono de carpeta y no con el de disco, que es lo
+	// que la distingue de un vistazo de la del sistema.
+	datos: 'folder',
 };
 
 /** Los mensajes. */

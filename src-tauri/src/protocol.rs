@@ -63,6 +63,9 @@ pub struct PlanInstalacion {
     /// y lo que ya está escrito en los archivos de configuración guardados.
     #[serde(default)]
     pub particion_destino: Option<String>,
+    /// Qué se hace con cada partición. Sólo con `Manual`.
+    #[serde(default)]
+    pub asignaciones: Vec<AsignacionManual>,
     pub sistema_archivos: SistemaArchivos,
     /// Cifrado LUKS de la raíz. La frase va aparte, en `secretos`.
     pub cifrar: bool,
@@ -140,6 +143,27 @@ pub enum EsquemaDisco {
     /// Instala sobre una partición que ya existe, formateando **sólo esa**.
     /// Cuál es va en `particion_destino`.
     SobreUnaParticion,
+    /// Cada partición se asigna a mano: dónde se monta y si se formatea. Las
+    /// asignaciones van en `asignaciones`.
+    Manual,
+}
+
+/// Qué hacer con una partición, en el modo manual.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsignacionManual {
+    /// La ruta en `/dev`, tal como la informa el sondeo.
+    pub particion: String,
+    /// Dónde se monta. `None` es «no se usa»: la partición se queda como está
+    /// y no se monta.
+    ///
+    /// Tiene que ser uno de `layout::PUNTOS_MANUALES`. No es una limitación
+    /// técnica: es que un punto de montaje escrito a mano es un lugar donde un
+    /// error de tipeo deja el sistema instalado en una carpeta que nadie mira,
+    /// y no hay forma de que el instalador se dé cuenta.
+    pub punto_montaje: Option<String>,
+    /// Si se formatea. En `false` la partición se conserva con lo que tenga
+    /// adentro y sólo se monta.
+    pub formatear: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -549,6 +549,7 @@ mod tests {
             disco: "/dev/nvme0n1".into(),
             esquema: EsquemaDisco::BorrarTodo,
             particion_destino: None,
+            asignaciones: Vec::new(),
             sistema_archivos: SistemaArchivos::Btrfs,
             cifrar,
             zram: true,
