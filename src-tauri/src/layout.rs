@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{EsquemaDisco, SistemaArchivos};
+use crate::protocol::{AsignacionManual, EsquemaDisco, SistemaArchivos};
 
 /// Un MiB en bytes.
 const MIB: u64 = 1024 * 1024;
@@ -179,6 +179,13 @@ pub enum Rol {
     /// La partición de arranque: el ESP en UEFI, `/boot` a secas en BIOS.
     Esp,
     Raiz,
+    /// Una partición que se monta en otro lado: `/home`, `/var`, `/srv`. Sólo
+    /// aparece en el modo manual, que es el único donde se pueden elegir.
+    ///
+    /// Existe para que la interfaz no la llame «Sistema». Un `/home` de 200
+    /// GiB rotulado como el sistema es exactamente el tipo de detalle que hace
+    /// dudar de si uno entendió bien la pantalla.
+    Datos,
 }
 
 /// Qué se le hace a una partición del plan.
@@ -265,6 +272,23 @@ pub enum ErrorPlan {
     /// Se pidió instalar sobre el ESP. Formatearlo como raíz deja al equipo sin
     /// partición de arranque, y de paso borra el cargador del otro sistema.
     ParticionEsElEsp { ruta: String },
+    /// En el modo manual: un punto de montaje que no está en
+    /// `PUNTOS_MANUALES`.
+    PuntoDeMontajeDesconocido { punto: String },
+    /// En el modo manual: el mismo punto de montaje dos veces, o la misma
+    /// partición asignada dos veces.
+    AsignacionRepetida { que: String },
+    /// En el modo manual: no se eligió ninguna partición para `/`.
+    SinRaiz,
+    /// En el modo manual: no se eligió ninguna para `/boot`.
+    SinArranque,
+    /// En el modo manual: la raíz sin formatear. Instalar sobre un sistema de
+    /// archivos que ya tiene cosas deja dos sistemas mezclados en el mismo
+    /// árbol de directorios.
+    LaRaizSeFormatea,
+    /// En el modo manual y UEFI: se asignó `/boot` a una partición que no es
+    /// el ESP. La instalación no arrancaría, y se descubriría al reiniciar.
+    ArranqueNoEsEsp { ruta: String },
 }
 
 impl std::fmt::Display for ErrorPlan {
@@ -304,6 +328,27 @@ impl std::fmt::Display for ErrorPlan {
             ErrorPlan::ParticionEsElEsp { ruta } => write!(
                 f,
                 "{ruta} es la partición de arranque EFI: usarla como raíz dejaría el equipo sin arrancar"
+            ),
+            ErrorPlan::PuntoDeMontajeDesconocido { punto } => write!(
+                f,
+                "«{punto}» no es un punto de montaje que se pueda elegir: {}",
+                PUNTOS_MANUALES.join(", ")
+            ),
+            ErrorPlan::AsignacionRepetida { que } => {
+                write!(f, "{que} está asignado dos veces")
+            }
+            ErrorPlan::SinRaiz => write!(f, "falta elegir en qué partición va el sistema (/)"),
+            ErrorPlan::SinArranque => write!(
+                f,
+                "falta elegir la partición de arranque EFI (/boot)"
+            ),
+            ErrorPlan::LaRaizSeFormatea => write!(
+                f,
+                "la partición del sistema tiene que formatearse: instalar encima de lo que ya hay deja dos sistemas mezclados"
+            ),
+            ErrorPlan::ArranqueNoEsEsp { ruta } => write!(
+                f,
+                "{ruta} no es una partición de sistema EFI, y en UEFI el arranque tiene que serlo"
             ),
         }
     }
@@ -624,6 +669,17 @@ fn esp_del_plan(disco: &Disco, hueco: Hueco) -> Result<(ParticionPlaneada, u64),
 
     match disco.particiones.iter().find(|p| p.es_esp()) {
         Some(esp) => {
+            // Igual que en los otros dos modos. Acá archinstall hoy ni mira la
+            // geometría de una `existing` —`partition()` filtra por
+            // `not p.exists()`— así que truncar a MiB no rompería nada todavía.
+            // Pero mandar números que no son los de la partición es apoyarse en
+            // que eso siga siendo cierto, y la regla vale igual: lo que se
+            // reusa se describe tal como está o no se reusa.
+            if esp.inicio_bytes % MIB != 0 || esp.tamano_bytes % MIB != 0 {
+                return Err(ErrorPlan::ParticionDesalineada {
+                    ruta: esp.ruta.clone(),
+                });
+            }
             let mib = esp.tamano_bytes / MIB;
             if mib < MINIMO_ESP_REUSABLE_MIB {
                 return Err(ErrorPlan::EspChico {
@@ -850,6 +906,221 @@ pub fn planificar_sobre(
     })
 }
 
+/// Los puntos de montaje que se pueden elegir a mano.
+///
+/// Una lista cerrada y no un campo de texto libre. No es una limitación
+/// técnica: un punto de montaje escrito a mano es un lugar donde un error de
+/// tipeo —`/hone`, `/boott`— deja el sistema instalado en una carpeta que nadie
+/// mira, y el instalador no tiene forma de darse cuenta. Todo lo que se
+/// escribiría en un instalador de escritorio está acá.
+///
+/// `/boot` es el ESP en UEFI, y por eso `planificar_manual` exige que la
+/// partición que se le asigne tenga el GUID de sistema EFI.
+pub const PUNTOS_MANUALES: &[&str] = &["/", "/boot", "/home", "/opt", "/srv", "/var"];
+
+/// El nombre que archinstall le da a un sistema de archivos que informó
+/// `lsblk`, o `None` si no lo conoce.
+///
+/// Los nombres no coinciden: `lsblk` dice `vfat` donde archinstall dice
+/// `fat32`, y `swap` donde dice `linux-swap`. Un nombre que no esté en su
+/// `FilesystemType` hace que el JSON entero se rechace con un `ValueError`, así
+/// que lo que no se reconoce va como `null` — que archinstall acepta en una
+/// partición que se conserva, porque no la va a formatear.
+fn fs_para_archinstall(fs: &str) -> Option<&'static str> {
+    Some(match fs {
+        "vfat" | "fat32" => "fat32",
+        "fat16" => "fat16",
+        "fat12" => "fat12",
+        "swap" => "linux-swap",
+        "btrfs" => "btrfs",
+        "ext2" => "ext2",
+        "ext3" => "ext3",
+        "ext4" => "ext4",
+        "f2fs" => "f2fs",
+        "ntfs" => "ntfs",
+        "xfs" => "xfs",
+        "crypto_LUKS" => "crypto_LUKS",
+        _ => return None,
+    })
+}
+
+/// Arma el plan a partir de lo que se eligió partición por partición.
+///
+/// Es el modo sin barandas, así que las barandas son las comprobaciones de
+/// acá. Todo lo que no esté asignado **no se toca**: no aparece en el plan, y
+/// por lo tanto tampoco en lo que archinstall ejecuta.
+///
+/// Lo que se exige, y por qué cada cosa:
+///
+///   - **Una raíz y una sola.** Sin raíz no hay dónde instalar; con dos,
+///     archinstall monta una encima de la otra y el sistema queda repartido.
+///   - **La raíz se formatea.** Instalar sobre un sistema de archivos que ya
+///     tiene cosas deja dos sistemas mezclados en el mismo árbol.
+///   - **`/boot` tiene que ser el ESP**, en UEFI. Asignar una partición común
+///     ahí da una instalación que no arranca, y se descubre al reiniciar.
+///   - **Todo lo asignado tiene que estar alineado**, por lo mismo que en
+///     `planificar_sobre`: para formatear hay que rehacer, y rehacer una
+///     partición desalineada la corre encima de la de al lado.
+///   - **Nada repetido**: ni dos puntos de montaje iguales ni dos veces la
+///     misma partición.
+pub fn planificar_manual(
+    disco: &Disco,
+    asignaciones: &[AsignacionManual],
+    firmware: Firmware,
+    fs: SistemaArchivos,
+    cifrar: bool,
+) -> Result<Plan, ErrorPlan> {
+    comprobar_disco(disco)?;
+    if firmware != Firmware::Uefi {
+        return Err(ErrorPlan::SoloUefi);
+    }
+
+    // Sólo las que se usan. Una asignación sin punto de montaje es «dejala como
+    // está», que es lo mismo que no nombrarla.
+    let usadas: Vec<&AsignacionManual> = asignaciones
+        .iter()
+        .filter(|a| a.punto_montaje.is_some())
+        .collect();
+
+    let mut vistas_particion: Vec<&str> = Vec::new();
+    let mut vistos_punto: Vec<&str> = Vec::new();
+    let mut plan: Vec<ParticionPlaneada> = Vec::new();
+    let mut hay_raiz = false;
+
+    for a in &usadas {
+        let punto_pedido = a.punto_montaje.as_deref().unwrap_or_default();
+        let punto = *PUNTOS_MANUALES
+            .iter()
+            .find(|p| **p == punto_pedido)
+            .ok_or_else(|| ErrorPlan::PuntoDeMontajeDesconocido {
+                punto: punto_pedido.to_string(),
+            })?;
+
+        if vistos_punto.contains(&punto) {
+            return Err(ErrorPlan::AsignacionRepetida {
+                que: punto.to_string(),
+            });
+        }
+        vistos_punto.push(punto);
+
+        let existente = disco
+            .particiones
+            .iter()
+            .find(|p| p.ruta == a.particion)
+            .ok_or_else(|| ErrorPlan::ParticionNoEsta {
+                ruta: a.particion.clone(),
+            })?;
+
+        if vistas_particion.contains(&existente.ruta.as_str()) {
+            return Err(ErrorPlan::AsignacionRepetida {
+                que: existente.ruta.clone(),
+            });
+        }
+        vistas_particion.push(&existente.ruta);
+
+        if existente.inicio_bytes % MIB != 0 || existente.tamano_bytes % MIB != 0 {
+            return Err(ErrorPlan::ParticionDesalineada {
+                ruta: existente.ruta.clone(),
+            });
+        }
+
+        let es_raiz = punto == "/";
+        let es_arranque = punto == "/boot";
+
+        if es_arranque && !existente.es_esp() {
+            return Err(ErrorPlan::ArranqueNoEsEsp {
+                ruta: existente.ruta.clone(),
+            });
+        }
+
+        if es_raiz {
+            hay_raiz = true;
+            if !a.formatear {
+                return Err(ErrorPlan::LaRaizSeFormatea);
+            }
+            let tiene_gib = existente.tamano_bytes / (1024 * MIB);
+            if tiene_gib < MINIMO_GIB {
+                return Err(ErrorPlan::Chico {
+                    tiene_gib,
+                    minimo_gib: MINIMO_GIB,
+                });
+            }
+        }
+
+        let accion = if a.formatear {
+            Accion::Formatear
+        } else {
+            Accion::Conservar
+        };
+
+        if es_raiz {
+            // La raíz lleva los subvolúmenes, las opciones de montaje y el
+            // cifrado, igual que en los otros modos: sale de la misma función
+            // para que un cambio ahí valga también acá.
+            plan.push(raiz_del_plan(
+                disco,
+                fs,
+                cifrar,
+                existente.inicio_bytes / MIB,
+                existente.tamano_bytes / MIB,
+                accion,
+                Some(existente.ruta.clone()),
+            ));
+            continue;
+        }
+
+        plan.push(ParticionPlaneada {
+            inicio_mib: existente.inicio_bytes / MIB,
+            tamano_mib: existente.tamano_bytes / MIB,
+            // Si se formatea, con el sistema de archivos elegido; si se
+            // conserva, con el que ya tiene —y `null` si archinstall no lo
+            // conoce, que en una partición que no va a formatear le da igual.
+            sistema_archivos: if a.formatear {
+                Some(if es_arranque { "fat32" } else { fs.como_archinstall() })
+            } else {
+                existente
+                    .sistema_archivos
+                    .as_deref()
+                    .and_then(fs_para_archinstall)
+            },
+            punto_montaje: Some(punto),
+            opciones_montaje: if es_arranque {
+                vec!["umask=0077".into()]
+            } else {
+                Vec::new()
+            },
+            banderas: if es_arranque {
+                vec!["boot", "esp"]
+            } else {
+                Vec::new()
+            },
+            subvolumenes: Vec::new(),
+            // Sólo la raíz va cifrada. El ESP no puede —el firmware tiene que
+            // leerlo— y el resto queda para cuando haya dónde pedir su frase.
+            cifrada: false,
+            rol: if es_arranque { Rol::Esp } else { Rol::Datos },
+            accion,
+            ruta: Some(existente.ruta.clone()),
+        });
+    }
+
+    if !hay_raiz {
+        return Err(ErrorPlan::SinRaiz);
+    }
+    // El arranque lo exige archinstall: `add_bootloader` busca una partición
+    // con bandera `boot` y punto de montaje, y sin ella la instalación muere al
+    // llegar al cargador, con el disco ya formateado.
+    if !vistos_punto.contains(&"/boot") {
+        return Err(ErrorPlan::SinArranque);
+    }
+
+    plan.sort_by_key(|p| p.inicio_mib);
+    Ok(Plan {
+        borrar_disco: false,
+        particiones: plan,
+    })
+}
+
 /// El plan que corresponde al esquema elegido.
 ///
 /// **El único despacho.** Existía en dos lados —la vista previa y el ayudante—
@@ -861,6 +1132,7 @@ pub fn planificar_con(
     disco: &Disco,
     esquema: EsquemaDisco,
     particion: Option<&str>,
+    asignaciones: &[AsignacionManual],
     firmware: Firmware,
     fs: SistemaArchivos,
     cifrar: bool,
@@ -868,6 +1140,7 @@ pub fn planificar_con(
     match esquema {
         EsquemaDisco::BorrarTodo => planificar_borrando(disco, firmware, fs, cifrar),
         EsquemaDisco::JuntoAOtroSistema => planificar_junto_a(disco, firmware, fs, cifrar),
+        EsquemaDisco::Manual => planificar_manual(disco, asignaciones, firmware, fs, cifrar),
         EsquemaDisco::SobreUnaParticion => {
             // Sin partición no hay nada que decidir, y adivinar cuál sería lo
             // peor que se puede hacer acá.
@@ -924,7 +1197,7 @@ fn opciones_de_montaje(fs: SistemaArchivos, disco: &Disco) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::{any, Strategy};
+    use proptest::prelude::{any, Just, Strategy};
 
     fn disco_de(tamano_gib: u64) -> Disco {
         Disco {
@@ -1777,6 +2050,317 @@ mod tests {
         // de trabajo del instalador.
         assert!(SUBVOLUMENES.iter().all(|(_, p)| p.starts_with('/')));
     }
+    fn asignar(particion: &str, punto: Option<&str>, formatear: bool) -> AsignacionManual {
+        AsignacionManual {
+            particion: particion.into(),
+            punto_montaje: punto.map(str::to_string),
+            formatear,
+        }
+    }
+
+    /// Un disco repartido: ESP, Windows, y dos particiones de un Linux viejo.
+    fn disco_repartido() -> Disco {
+        let mut d = disco_de(500);
+        let mut inicio = MIB;
+        let mut nuevas = Vec::new();
+        for (n, tam_gib, fs, guid, os) in [
+            (1u32, 1u64, Some("vfat"), GUID_ESP, None),
+            (
+                2,
+                100,
+                Some("ntfs"),
+                "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+                Some("Windows 11"),
+            ),
+            (
+                3,
+                60,
+                Some("ext4"),
+                "0fc63daf-8483-4772-8e79-3d69d8477de4",
+                Some("Debian 12"),
+            ),
+            (
+                4,
+                200,
+                Some("ext4"),
+                "0fc63daf-8483-4772-8e79-3d69d8477de4",
+                None,
+            ),
+        ] {
+            let tam = tam_gib * 1024 * MIB;
+            nuevas.push(ParticionExistente {
+                ruta: format!("/dev/sda{n}"),
+                inicio_bytes: inicio,
+                tamano_bytes: tam,
+                sistema_archivos: fs.map(str::to_string),
+                etiqueta: None,
+                numero: Some(n),
+                tipo_particion: Some(guid.into()),
+                sistema_operativo: os.map(str::to_string),
+            });
+            inicio += tam;
+        }
+        d.particiones = nuevas;
+        d
+    }
+
+    /// **Lo que no se asigna, no se toca.**
+    ///
+    /// Es la promesa entera del modo manual, y la que más fácil se rompe: en
+    /// los otros modos el plan se arma solo, acá lo arma alguien. Una partición
+    /// que se cuela en el plan sin haber sido elegida es un dato ajeno perdido.
+    #[test]
+    fn en_manual_lo_que_no_se_asigna_no_aparece() {
+        let disco = disco_repartido();
+        // Se usa el ESP y la última; Windows y el Linux viejo se dejan.
+        let asignaciones = vec![
+            asignar("/dev/sda1", Some("/boot"), false),
+            asignar("/dev/sda4", Some("/"), true),
+            // Nombrada pero sin punto: es «dejala como está».
+            asignar("/dev/sda3", None, false),
+        ];
+        let plan = planificar_manual(
+            &disco,
+            &asignaciones,
+            Firmware::Uefi,
+            SistemaArchivos::Btrfs,
+            false,
+        )
+        .unwrap();
+
+        let rutas: Vec<&str> = plan
+            .particiones
+            .iter()
+            .filter_map(|p| p.ruta.as_deref())
+            .collect();
+        assert_eq!(rutas, ["/dev/sda1", "/dev/sda4"]);
+
+        let victimas: Vec<&str> = plan
+            .a_destruir(&disco)
+            .iter()
+            .map(|p| p.ruta.as_str())
+            .collect();
+        assert_eq!(victimas, ["/dev/sda4"], "sólo se formatea la raíz");
+        assert!(!plan.borrar_disco);
+    }
+
+    /// **Un `/home` que ya existe se conserva y se monta.**
+    ///
+    /// Es la razón principal por la que alguien usa el modo manual: reinstalar
+    /// el sistema y quedarse con los archivos. `Conservar` es `existing` en
+    /// archinstall, que no lo formatea pero sí lo monta.
+    #[test]
+    fn en_manual_un_home_existente_se_conserva() {
+        let disco = disco_repartido();
+        let asignaciones = vec![
+            asignar("/dev/sda1", Some("/boot"), false),
+            asignar("/dev/sda3", Some("/"), true),
+            asignar("/dev/sda4", Some("/home"), false),
+        ];
+        let plan = planificar_manual(
+            &disco,
+            &asignaciones,
+            Firmware::Uefi,
+            SistemaArchivos::Ext4,
+            false,
+        )
+        .unwrap();
+
+        let home = plan
+            .particiones
+            .iter()
+            .find(|p| p.punto_montaje == Some("/home"))
+            .unwrap();
+        assert_eq!(home.accion, Accion::Conservar);
+        assert_eq!(home.ruta.as_deref(), Some("/dev/sda4"));
+        // El sistema de archivos que ya tiene, con el nombre de archinstall.
+        assert_eq!(home.sistema_archivos, Some("ext4"));
+        assert!(!home.cifrada);
+
+        let victimas: Vec<&str> = plan
+            .a_destruir(&disco)
+            .iter()
+            .map(|p| p.ruta.as_str())
+            .collect();
+        assert_eq!(victimas, ["/dev/sda3"], "el /home no se pierde");
+    }
+
+    /// **`vfat` no es `fat32`, y un nombre que archinstall no conozca no puede
+    /// viajar.**
+    ///
+    /// `lsblk` dice `vfat`, `FilesystemType` de archinstall dice `fat32`. Un
+    /// nombre que no esté en su enumeración hace que rechace el JSON entero con
+    /// un `ValueError`, o sea que la instalación no arranca por el nombre de un
+    /// sistema de archivos que ni siquiera se iba a tocar.
+    #[test]
+    fn el_nombre_del_sistema_de_archivos_se_traduce() {
+        assert_eq!(fs_para_archinstall("vfat"), Some("fat32"));
+        assert_eq!(fs_para_archinstall("swap"), Some("linux-swap"));
+        assert_eq!(fs_para_archinstall("ext4"), Some("ext4"));
+        assert_eq!(fs_para_archinstall("ntfs"), Some("ntfs"));
+        // Los que no conoce van como `null`, que en una partición que no se
+        // formatea archinstall acepta sin chistar.
+        assert_eq!(fs_para_archinstall("zfs"), None);
+        assert_eq!(fs_para_archinstall("apfs"), None);
+        assert_eq!(fs_para_archinstall(""), None);
+
+        // Y el ESP conservado sale como `fat32` y no como `vfat`.
+        let disco = disco_repartido();
+        let plan = planificar_manual(
+            &disco,
+            &[
+                asignar("/dev/sda1", Some("/boot"), false),
+                asignar("/dev/sda4", Some("/"), true),
+            ],
+            Firmware::Uefi,
+            SistemaArchivos::Btrfs,
+            false,
+        )
+        .unwrap();
+        let esp = plan.particiones.iter().find(|p| p.rol == Rol::Esp).unwrap();
+        assert_eq!(esp.sistema_archivos, Some("fat32"));
+    }
+
+    /// **Todo lo que el modo manual rechaza, y por qué.**
+    #[test]
+    fn en_manual_las_barandas_estan() {
+        let disco = disco_repartido();
+        let uefi = |a: Vec<AsignacionManual>| {
+            planificar_manual(&disco, &a, Firmware::Uefi, SistemaArchivos::Btrfs, false)
+        };
+        let boot = || asignar("/dev/sda1", Some("/boot"), false);
+        let raiz = || asignar("/dev/sda4", Some("/"), true);
+
+        // Sin raíz no hay dónde instalar.
+        assert_eq!(uefi(vec![boot()]).unwrap_err(), ErrorPlan::SinRaiz);
+
+        // Sin arranque, archinstall muere al llegar al cargador con el disco ya
+        // formateado.
+        assert_eq!(uefi(vec![raiz()]).unwrap_err(), ErrorPlan::SinArranque);
+
+        // La raíz sin formatear deja dos sistemas mezclados en el mismo árbol.
+        assert_eq!(
+            uefi(vec![boot(), asignar("/dev/sda4", Some("/"), false)]).unwrap_err(),
+            ErrorPlan::LaRaizSeFormatea
+        );
+
+        // `/boot` en una partición que no es el ESP: no arrancaría, y se
+        // descubriría al reiniciar.
+        assert_eq!(
+            uefi(vec![
+                asignar("/dev/sda3", Some("/boot"), true),
+                raiz()
+            ])
+            .unwrap_err(),
+            ErrorPlan::ArranqueNoEsEsp {
+                ruta: "/dev/sda3".into()
+            }
+        );
+
+        // El mismo punto dos veces: archinstall montaría una encima de la otra.
+        assert_eq!(
+            uefi(vec![boot(), raiz(), asignar("/dev/sda3", Some("/"), true)]).unwrap_err(),
+            ErrorPlan::AsignacionRepetida { que: "/".into() }
+        );
+
+        // Y la misma partición dos veces.
+        assert_eq!(
+            uefi(vec![
+                boot(),
+                raiz(),
+                asignar("/dev/sda4", Some("/home"), false)
+            ])
+            .unwrap_err(),
+            ErrorPlan::AsignacionRepetida {
+                que: "/dev/sda4".into()
+            }
+        );
+
+        // Un punto de montaje inventado.
+        assert_eq!(
+            uefi(vec![boot(), raiz(), asignar("/dev/sda3", Some("/hone"), false)]).unwrap_err(),
+            ErrorPlan::PuntoDeMontajeDesconocido {
+                punto: "/hone".into()
+            }
+        );
+
+        // Una partición que ya no está.
+        assert_eq!(
+            uefi(vec![boot(), asignar("/dev/sda9", Some("/"), true)]).unwrap_err(),
+            ErrorPlan::ParticionNoEsta {
+                ruta: "/dev/sda9".into()
+            }
+        );
+
+        // Una raíz que no llega al mínimo: sda1 es el ESP de 1 GiB, así que se
+        // usa como raíz una que sí exista y sea chica.
+        let mut chico = disco_repartido();
+        chico.particiones[3].tamano_bytes = 10 * 1024 * MIB;
+        assert!(matches!(
+            planificar_manual(
+                &chico,
+                &[boot(), raiz()],
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            ),
+            Err(ErrorPlan::Chico { .. })
+        ));
+
+        // Y en BIOS, nada de esto.
+        assert_eq!(
+            planificar_manual(
+                &disco,
+                &[boot(), raiz()],
+                Firmware::Bios,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::SoloUefi
+        );
+    }
+
+    /// **En manual, sólo la raíz va cifrada.**
+    ///
+    /// El ESP no puede: el firmware tiene que poder leerlo para arrancar. Y el
+    /// resto tampoco, porque no hay dónde pedirle la frase a alguien en el
+    /// arranque más que para la raíz.
+    #[test]
+    fn en_manual_solo_la_raiz_va_cifrada() {
+        let disco = disco_repartido();
+        let plan = planificar_manual(
+            &disco,
+            &[
+                asignar("/dev/sda1", Some("/boot"), false),
+                asignar("/dev/sda3", Some("/"), true),
+                asignar("/dev/sda4", Some("/home"), true),
+            ],
+            Firmware::Uefi,
+            SistemaArchivos::Btrfs,
+            true,
+        )
+        .unwrap();
+
+        for p in &plan.particiones {
+            assert_eq!(
+                p.cifrada,
+                p.rol == Rol::Raiz,
+                "{:?} ({:?}) tiene cifrada={}",
+                p.ruta,
+                p.rol,
+                p.cifrada
+            );
+        }
+        // Y el /home formateado se pierde, que es lo que se pidió.
+        let victimas: Vec<&str> = plan
+            .a_destruir(&disco)
+            .iter()
+            .map(|p| p.ruta.as_str())
+            .collect();
+        assert_eq!(victimas, ["/dev/sda3", "/dev/sda4"]);
+    }
+
     // ── Propiedades ─────────────────────────────────────────────────────────
     //
     // Los tests de arriba dicen cada uno un caso. Éstos dicen lo que tiene que
@@ -1801,8 +2385,14 @@ mod tests {
             proptest::collection::vec((0u64..4096, 1u64..60_000, 0usize..3), 0..6),
             any::<bool>(),                                  // ¿hay ESP?
             512u64..=4096,
+            // Cuántos bytes se corre la tabla entera. Casi siempre cero, que es
+            // lo que hace cualquier particionador desde hace quince años; pero
+            // una tabla vieja hecha con otra herramienta las deja a mitad de un
+            // MiB, y ése es justo el caso que el plan tiene que rechazar. Sin
+            // esto, la comprobación de alineación no la ejercita nadie.
+            proptest::prop_oneof![9 => Just(0u64), 1 => 1u64..1_048_576],
         )
-            .prop_map(|(gib, tramos, con_esp, sector)| {
+            .prop_map(|(gib, tramos, con_esp, sector, desfase)| {
                 let sector = if sector <= 512 { 512 } else { 4096 };
                 let total_mib = gib * 1024;
                 let mut particiones = Vec::new();
@@ -1811,7 +2401,7 @@ mod tests {
                 if con_esp {
                     particiones.push(ParticionExistente {
                         ruta: "/dev/sda1".into(),
-                        inicio_bytes: cursor * MIB,
+                        inicio_bytes: cursor * MIB + desfase,
                         tamano_bytes: 512 * MIB,
                         sistema_archivos: Some("vfat".into()),
                         etiqueta: Some("SYSTEM".into()),
@@ -1826,13 +2416,13 @@ mod tests {
                     cursor += hueco;
                     // Se para al llegar al final: el último MiB es la copia de
                     // la tabla GPT y ahí no va nada.
-                    if cursor + tamano + RESERVA_FINAL_MIB > total_mib {
+                    if cursor + tamano + RESERVA_FINAL_MIB + 1 > total_mib {
                         break;
                     }
                     let n = particiones.len() + 1;
                     particiones.push(ParticionExistente {
                         ruta: format!("/dev/sda{n}"),
-                        inicio_bytes: cursor * MIB,
+                        inicio_bytes: cursor * MIB + desfase,
                         tamano_bytes: tamano * MIB,
                         sistema_archivos: match tipo {
                             0 => Some("ntfs".into()),
@@ -1875,6 +2465,7 @@ mod tests {
                 disco,
                 esquema,
                 particion,
+                &[],
                 Firmware::Uefi,
                 fs,
                 cifrar,
@@ -1886,6 +2477,44 @@ mod tests {
         for e in &disco.particiones {
             if let Ok(p) = planificar_sobre(disco, &e.ruta, Firmware::Uefi, fs, cifrar) {
                 salida.push(("sobre", p));
+            }
+        }
+
+        // El manual, que es el que más falta hace acá: en los otros el plan lo
+        // arma el instalador, y acá lo arma alguien. Se prueban todas las
+        // combinaciones de «ESP en /boot, una partición en /, otra en /home»,
+        // con y sin formatear la de /home.
+        let esp = disco.particiones.iter().find(|p| p.es_esp());
+        if let Some(esp) = esp {
+            for raiz in disco.particiones.iter().filter(|p| !p.es_esp()) {
+                for otra in disco.particiones.iter().filter(|p| !p.es_esp()) {
+                    for formatear_otra in [false, true] {
+                        let mut a = vec![
+                            AsignacionManual {
+                                particion: esp.ruta.clone(),
+                                punto_montaje: Some("/boot".into()),
+                                formatear: false,
+                            },
+                            AsignacionManual {
+                                particion: raiz.ruta.clone(),
+                                punto_montaje: Some("/".into()),
+                                formatear: true,
+                            },
+                        ];
+                        if otra.ruta != raiz.ruta {
+                            a.push(AsignacionManual {
+                                particion: otra.ruta.clone(),
+                                punto_montaje: Some("/home".into()),
+                                formatear: formatear_otra,
+                            });
+                        }
+                        if let Ok(p) =
+                            planificar_manual(disco, &a, Firmware::Uefi, fs, cifrar)
+                        {
+                            salida.push(("manual", p));
+                        }
+                    }
+                }
             }
         }
         salida
@@ -1908,17 +2537,26 @@ mod tests {
         let mut runner = TestRunner::deterministic();
         let estrategia = un_disco_usado();
         let (mut con_esp_ajeno, mut con_sobre, mut con_al_lado, mut total) = (0, 0, 0, 0);
+        let (mut con_manual, mut desalineados) = (0, 0);
 
         for _ in 0..300 {
             let disco = estrategia.new_tree(&mut runner).unwrap().current();
             if disco.particiones.iter().any(|p| p.es_esp()) {
                 con_esp_ajeno += 1;
             }
+            if disco
+                .particiones
+                .iter()
+                .any(|p| p.inicio_bytes % MIB != 0 || p.tamano_bytes % MIB != 0)
+            {
+                desalineados += 1;
+            }
             for (nombre, _) in planes_de(&disco, SistemaArchivos::Btrfs, false) {
                 total += 1;
                 match nombre {
                     "sobre" => con_sobre += 1,
                     "al lado" => con_al_lado += 1,
+                    "manual" => con_manual += 1,
                     _ => {}
                 }
             }
@@ -1927,6 +2565,14 @@ mod tests {
         assert!(total > 300, "sólo {total} planes en 300 discos: casi todos vacíos");
         assert!(con_sobre > 20, "sólo {con_sobre} planes «sobre una partición»");
         assert!(con_al_lado > 20, "sólo {con_al_lado} planes «al lado»");
+        assert!(con_manual > 20, "sólo {con_manual} planes manuales");
+        // Sin discos desalineados, las tres comprobaciones de alineación —una
+        // por modo— no las ejercita nadie, y `lo_que_se_reusa_conserva_su_geometria`
+        // pasaría sin haber visto el caso que la motiva.
+        assert!(
+            desalineados > 10,
+            "sólo {desalineados} discos desalineados en 300"
+        );
         assert!(
             con_esp_ajeno > 50,
             "sólo {con_esp_ajeno} discos con ESP ajeno: la propiedad del ESP no probaría nada"
@@ -2006,6 +2652,46 @@ mod tests {
                             ),
                         }
                     }
+                }
+            }
+        }
+
+        /// **Una partición que se reusa conserva su geometría exacta.**
+        ///
+        /// `Conservar` y `Formatear` no crean nada: apuntan a una partición que
+        /// ya está. Si el plan le cambiara los números —aunque fuera por el
+        /// redondeo a MiB de una partición desalineada— archinstall la rehace
+        /// en otro lado, y «otro lado» es encima de la de al lado.
+        ///
+        /// Por eso el generador desalinea a veces: si todas las particiones
+        /// entraran justas en MiB, esta propiedad y la comprobación de
+        /// alineación que la sostiene no las ejercitaría nadie.
+        #[test]
+        fn lo_que_se_reusa_conserva_su_geometria(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                for p in &plan.particiones {
+                    if p.accion == Accion::Crear {
+                        continue;
+                    }
+                    let ruta = p.ruta.as_deref().unwrap_or("");
+                    let e = disco
+                        .particiones
+                        .iter()
+                        .find(|e| e.ruta == ruta)
+                        .expect("una partición reusada tiene que existir");
+                    proptest::prop_assert_eq!(
+                        p.inicio_mib * MIB, e.inicio_bytes,
+                        "{}: {} se movería de {} a {}",
+                        nombre, ruta, e.inicio_bytes, p.inicio_mib * MIB
+                    );
+                    proptest::prop_assert_eq!(
+                        p.tamano_mib * MIB, e.tamano_bytes,
+                        "{}: {} cambiaría de tamaño",
+                        nombre, ruta
+                    );
                 }
             }
         }

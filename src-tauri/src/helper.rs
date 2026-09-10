@@ -427,6 +427,7 @@ fn instalar(
         disco,
         plan.esquema,
         plan.particion_destino.as_deref(),
+        &plan.asignaciones,
         firmware,
         plan.sistema_archivos,
         plan.cifrar,

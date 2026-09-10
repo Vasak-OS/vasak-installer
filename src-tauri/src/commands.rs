@@ -22,7 +22,9 @@ use crate::complementos::{self, Complemento};
 use crate::hardware::{self, Hardware};
 use crate::layout::{self, Disco, Firmware, Rol};
 use crate::probe::{self, Sistema};
-use crate::protocol::{CuerpoPeticion, EsquemaDisco, Paso, PlanInstalacion, SistemaArchivos};
+use crate::protocol::{
+    AsignacionManual, CuerpoPeticion, EsquemaDisco, Paso, PlanInstalacion, SistemaArchivos,
+};
 use crate::sidecar::Ayudante;
 use crate::validar::{self, ErrorNombre, Fuerza};
 
@@ -184,6 +186,7 @@ pub fn vista_previa_particionado(
     disco: String,
     esquema: EsquemaDisco,
     particion_destino: Option<String>,
+    asignaciones: Vec<AsignacionManual>,
     sistema_archivos: SistemaArchivos,
     cifrar: bool,
 ) -> Result<VistaPrevia, String> {
@@ -198,6 +201,7 @@ pub fn vista_previa_particionado(
         elegido,
         esquema,
         particion_destino.as_deref(),
+        &asignaciones,
         firmware,
         sistema_archivos,
         cifrar,
@@ -227,6 +231,7 @@ fn vista_previa_de(disco: &Disco, firmware: Firmware, plan: &layout::Plan) -> Vi
                 rol: match p.rol {
                     Rol::Esp => "esp".into(),
                     Rol::Raiz => "raiz".into(),
+                    Rol::Datos => "datos".into(),
                 },
                 inicio_bytes: p.inicio_mib * MIB,
                 tamano_bytes: p.tamano_mib * MIB,

@@ -206,6 +206,7 @@ disco:
   seVaAPerderVacio: The disk is empty.
   rolEsp: EFI boot partition
   rolRaiz: System
+  rolDatos: Data
   subvolumenes: Subvolumes
   opcionesMontaje: Mount options
   cifradaEtiqueta: Encrypted

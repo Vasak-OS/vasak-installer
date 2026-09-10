@@ -207,6 +207,7 @@ disco:
   seVaAPerderVacio: El disco no tiene nada.
   rolEsp: Partición de arranque EFI
   rolRaiz: Sistema
+  rolDatos: Datos
   subvolumenes: Subvolúmenes
   opcionesMontaje: Opciones de montaje
   cifradaEtiqueta: Cifrada
