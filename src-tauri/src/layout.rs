@@ -659,75 +659,69 @@ fn comprobar_disco(disco: &Disco) -> Result<(), ErrorPlan> {
 /// Devuelve además cuántos MiB del hueco se usaron: cero si se reusó uno que ya
 /// existe, y `ARRANQUE_MIB` si hubo que crearlo.
 fn esp_del_plan(disco: &Disco, hueco: Hueco) -> Result<(ParticionPlaneada, u64), ErrorPlan> {
-    let comun = |accion, ruta, inicio_mib, tamano_mib| ParticionPlaneada {
-        inicio_mib,
-        tamano_mib,
-        sistema_archivos: Some("fat32"),
-        punto_montaje: Some("/boot"),
-        // El ESP es FAT y FAT no tiene permisos: sin `umask` queda legible por
-        // cualquiera, y ahí están el kernel y el initramfs.
-        opciones_montaje: vec!["umask=0077".into()],
-        banderas: vec!["boot", "esp"],
-        subvolumenes: Vec::new(),
-        // El ESP **nunca** va cifrado: el firmware tiene que poder leerlo.
-        cifrada: false,
-        rol: Rol::Esp,
-        accion,
-        ruta,
+    // El primero que **sirva**, no el primero que haya.
+    //
+    // La diferencia aparece en cuanto puede haber más de un ESP en el disco, y
+    // eso es justamente lo que este código produce: instalado una vez al lado
+    // de un Windows, el disco queda con el ESP de 100 MiB de Windows y el
+    // nuestro de 1 GiB. Reinstalando, «el primero» es el de Windows —está
+    // antes en el disco—, se descarta por chico, y se haría **otro**. Uno por
+    // reinstalación, hasta que no entre.
+    //
+    // Se descarta también el desalineado: para reusarlo hay que describir su
+    // geometría, y en MiB enteros no se puede describir. Igual que en los
+    // otros modos.
+    let reusable = disco.particiones.iter().find(|p| {
+        p.es_esp()
+            && p.tamano_bytes / MIB >= MINIMO_ESP_REUSABLE_MIB
+            && p.inicio_bytes % MIB == 0
+            && p.tamano_bytes % MIB == 0
+    });
+
+    let Some(esp) = reusable else {
+        // No hay ninguno que sirva. Puede que no haya ESP —un disco con un
+        // Linux viejo en MBR, o uno con datos y nada más— o que el que hay sea
+        // demasiado chico, que es el caso típico: Windows hace el suyo de 100
+        // MiB porque ahí guarda sólo el cargador, y nosotros guardamos además
+        // el kernel y los dos initramfs.
+        //
+        // En los dos casos se hace uno propio en el hueco libre, y el ajeno no
+        // se toca: no se monta, no se formatea, ni entra en el plan. Windows
+        // conserva el suyo con su cargador adentro y sigue arrancando.
+        //
+        // La otra salida sería la de CachyOS con GRUB —ESP en `/boot/efi` y el
+        // kernel en la raíz, que entra en 100 MiB—, pero con archinstall no
+        // sale limpia: `_add_grub_bootloader` le pasa `--boot-directory` a la
+        // partición con bandera `boot` en cuanto no se monta en `/boot`, así
+        // que GRUB terminaría adentro del ESP ajeno; y con cifrado haría falta
+        // `GRUB_ENABLE_CRYPTODISK`, que archinstall no escribe nunca. Ver
+        // Vasak-OS/vasak-installer#31.
+        return crear_esp(hueco);
     };
 
-    match disco.particiones.iter().find(|p| p.es_esp()) {
-        Some(esp) => {
-            // Igual que en los otros dos modos. Acá archinstall hoy ni mira la
-            // geometría de una `existing` —`partition()` filtra por
-            // `not p.exists()`— así que truncar a MiB no rompería nada todavía.
-            // Pero mandar números que no son los de la partición es apoyarse en
-            // que eso siga siendo cierto, y la regla vale igual: lo que se
-            // reusa se describe tal como está o no se reusa.
-            if esp.inicio_bytes % MIB != 0 || esp.tamano_bytes % MIB != 0 {
-                return Err(ErrorPlan::ParticionDesalineada {
-                    ruta: esp.ruta.clone(),
-                });
-            }
-            let mib = esp.tamano_bytes / MIB;
-            if mib < MINIMO_ESP_REUSABLE_MIB {
-                // Demasiado chico para lo que ponemos adentro, así que **no se
-                // usa** — y tampoco se rechaza la instalación. Se hace uno
-                // propio en el hueco libre y el de Windows queda intacto:
-                // sigue teniendo su cargador y sigue arrancando.
-                //
-                // Es el caso normal, no el raro: Windows hace su ESP de 100
-                // MiB porque ahí guarda sólo el cargador. Nosotros guardamos
-                // además el kernel y los dos initramfs.
-                //
-                // La otra salida sería la de CachyOS con GRUB —ESP en
-                // `/boot/efi` y el kernel en la raíz, que entra en 100 MiB—,
-                // pero con archinstall no sale limpia: `_add_grub_bootloader`
-                // le pasa `--boot-directory` a la partición con bandera `boot`
-                // en cuanto no se monta en `/boot`, así que GRUB terminaría
-                // adentro del ESP ajeno; y con cifrado haría falta
-                // `GRUB_ENABLE_CRYPTODISK`, que archinstall no escribe nunca.
-                // Ver Vasak-OS/vasak-installer#31.
-                return crear_esp(hueco);
-            }
-            // `Conservar` es lo único que archinstall no formatea, y formatear
-            // el ESP ajeno es borrarle el cargador al otro sistema. La
-            // geometría va tal como está porque no se la va a tocar; se manda
-            // igual porque archinstall la pide.
-            Ok((
-                comun(
-                    Accion::Conservar,
-                    Some(esp.ruta.clone()),
-                    esp.inicio_bytes / MIB,
-                    mib,
-                ),
-                0,
-            ))
-        }
-        // Sin ESP no hay nada que reusar: un disco con un Linux viejo en MBR, o
-        // uno con datos y nada más.
-        None => crear_esp(hueco),
-    }
+    // `Conservar` es lo único que archinstall no formatea, y formatear el ESP
+    // ajeno es borrarle el cargador al otro sistema. La geometría va tal como
+    // está porque no se la va a tocar; se manda igual porque archinstall la
+    // pide.
+    Ok((
+        ParticionPlaneada {
+            inicio_mib: esp.inicio_bytes / MIB,
+            tamano_mib: esp.tamano_bytes / MIB,
+            sistema_archivos: Some("fat32"),
+            punto_montaje: Some("/boot"),
+            // El ESP es FAT y FAT no tiene permisos: sin `umask` queda legible
+            // por cualquiera, y ahí están el kernel y el initramfs.
+            opciones_montaje: vec!["umask=0077".into()],
+            banderas: vec!["boot", "esp"],
+            subvolumenes: Vec::new(),
+            // El ESP **nunca** va cifrado: el firmware tiene que poder leerlo.
+            cifrada: false,
+            rol: Rol::Esp,
+            accion: Accion::Conservar,
+            ruta: Some(esp.ruta.clone()),
+        },
+        0,
+    ))
 }
 
 /// Uno propio, al principio del hueco libre.
@@ -1494,6 +1488,63 @@ mod tests {
                 e.ruta
             );
         }
+    }
+
+    /// **Reinstalar no acumula particiones de arranque.**
+    ///
+    /// En cuanto el instalador puede crear un ESP propio, el disco puede tener
+    /// más de uno — y ése es el estado normal después de instalar una vez al
+    /// lado de un Windows. Buscar «el primer ESP» encuentra el de Windows,
+    /// que está antes en el disco, lo descarta por chico, y hace otro. Uno por
+    /// reinstalación, hasta que no entre.
+    ///
+    /// Lo que corresponde es buscar el primero que **sirva**.
+    #[test]
+    fn reinstalar_reusa_el_esp_propio_en_vez_de_hacer_otro() {
+        // Como queda el disco después de la primera instalación al lado: el
+        // ESP de 100 MiB de Windows adelante, y el nuestro de 1 GiB atrás.
+        let mut disco = disco_con_windows(500, 100);
+        let ultima = disco.particiones.last().unwrap().clone();
+        disco.particiones.push(ParticionExistente {
+            ruta: "/dev/sda4".into(),
+            inicio_bytes: ultima.fin_bytes(),
+            tamano_bytes: ARRANQUE_MIB * MIB,
+            sistema_archivos: Some("vfat".into()),
+            etiqueta: Some("VASAK".into()),
+            numero: Some(4),
+            tipo_particion: Some(GUID_ESP.into()),
+            sistema_operativo: None,
+        });
+
+        let plan =
+            planificar_junto_a(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+
+        let esps: Vec<&ParticionPlaneada> =
+            plan.particiones.iter().filter(|p| p.rol == Rol::Esp).collect();
+        assert_eq!(esps.len(), 1, "el plan trae más de un ESP: {esps:?}");
+        assert_eq!(esps[0].accion, Accion::Conservar, "se hizo un tercer ESP");
+        assert_eq!(esps[0].ruta.as_deref(), Some("/dev/sda4"));
+
+        // El de Windows sigue sin tocarse.
+        assert!(plan.a_destruir(&disco).is_empty());
+    }
+
+    /// **Un ESP desalineado tampoco se reusa: se hace uno propio.**
+    ///
+    /// Para reusarlo hay que describir su geometría, y en MiB enteros no se
+    /// puede describir sin correrlo. Antes esto cortaba la instalación; ahora
+    /// cae en la misma rama que el ESP demasiado chico, que es la salida que
+    /// no toca nada ajeno.
+    #[test]
+    fn un_esp_desalineado_no_se_reusa() {
+        let mut disco = disco_con_windows(500, 512);
+        disco.particiones[0].inicio_bytes += 512;
+
+        let plan =
+            planificar_junto_a(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let esp = plan.particiones.iter().find(|p| p.rol == Rol::Esp).unwrap();
+        assert_eq!(esp.accion, Accion::Crear);
+        assert!(plan.a_destruir(&disco).is_empty());
     }
 
     /// **Y si además no hay hueco, ahí sí se falla.**
