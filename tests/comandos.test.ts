@@ -70,8 +70,15 @@ function comandosDeRust(): Map<string, string[]> {
  * —`{ nombre: x }`, que es la mitad de las llamadas— no daba ninguna clave y el
  * test acusaba cinco comandos que estaban perfectos. Un test que da falsos
  * positivos se termina ignorando, que es peor que no tenerlo.
+ *
+ * Devuelve `null` cuando el objeto trae un `...spread` de primer nivel: ahí no
+ * se puede saber qué claves lleva y hay que saltear la llamada entera. Se
+ * detecta recorriendo y no con un `includes('...')`, que también casaría con
+ * los puntos suspensivos adentro de una cadena o de un comentario y haría
+ * saltear una llamada perfectamente analizable — escondiendo justo el
+ * desfasaje que este archivo busca.
  */
-function clavesDe(cuerpo: string): string[] {
+function clavesDe(cuerpo: string): string[] | null {
 	const claves: string[] = [];
 	let nivel = 0;
 	let comilla: string | null = null;
@@ -118,6 +125,11 @@ function clavesDe(cuerpo: string): string[] {
 			continue;
 		}
 		if (nivel > 0) continue;
+
+		// `...` fuera de una cadena y en el primer nivel: es un spread.
+		if (c === '.' && cuerpo.slice(i, i + 3) === '...') {
+			return null;
+		}
 
 		if (c === ':') {
 			const clave = token.trim();
@@ -215,11 +227,11 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 				if (texto[hasta] === '{') nivel++;
 				else if (texto[hasta] === '}' && --nivel === 0) break;
 			}
-			const cuerpo = texto.slice(desde + 1, hasta);
-			// Con un `...spread` no se puede saber qué claves lleva, y
-			// adivinar daría acusaciones falsas. Se saltea la llamada.
-			if (cuerpo.includes('...')) continue;
-			salida.push({ archivo, comando, claves: clavesDe(cuerpo) });
+			const claves = clavesDe(texto.slice(desde + 1, hasta));
+			// `null` es un `...spread`: no se puede saber qué claves lleva, y
+			// adivinar daría acusaciones falsas.
+			if (claves === null) continue;
+			salida.push({ archivo, comando, claves });
 		}
 	}
 	return salida;
@@ -227,6 +239,49 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 
 const comandos = comandosDeRust();
 const invocaciones = llamadas();
+
+describe('el lector de claves', () => {
+	// El analizador de este archivo se equivocó cinco veces mientras se
+	// escribía, y cada vez de una forma que no se veía en el repositorio donde
+	// estaba: objetos en una sola línea, la forma abreviada, un `{` buscado
+	// demasiado lejos, comentarios con dos puntos, y puntos suspensivos
+	// adentro de una cadena. Estos casos son cada uno de ésos, escritos
+	// directo contra la función, para que el próximo se vea sin tener que
+	// portar el archivo a otro repositorio.
+
+	test('la forma normal y la abreviada', () => {
+		expect(clavesDe(' a: 1, b, c: 3 ')).toEqual(['a', 'b', 'c']);
+		expect(clavesDe(' profile ')).toEqual(['profile']);
+	});
+
+	test('un ternario no aporta claves', () => {
+		expect(clavesDe(" x: a === 'b' ? c : null ")).toEqual(['x']);
+	});
+
+	test('un comentario con dos puntos no se come la clave que sigue', () => {
+		expect(clavesDe(' // Tauri deserializa: los argumentos\n nombre: x ')).toEqual([
+			'nombre',
+		]);
+	});
+
+	test('un spread hace que la llamada no se pueda analizar', () => {
+		expect(clavesDe(' ...base, extra: 1 ')).toBeNull();
+	});
+
+	test('pero unos puntos suspensivos en una cadena, no', () => {
+		// Era un salteo falso: la llamada se descartaba entera, y con ella
+		// cualquier desfasaje de sus argumentos.
+		expect(clavesDe(" texto: '...' ")).toEqual(['texto']);
+		expect(clavesDe(' // esto sigue...\n nombre: x ')).toEqual(['nombre']);
+	});
+
+	test('las claves anidadas no cuentan', () => {
+		expect(clavesDe(' plan: { disco: 1, cifrar: true }, otro: 2 ')).toEqual([
+			'plan',
+			'otro',
+		]);
+	});
+});
 
 describe('los comandos', () => {
 	test('hay comandos y llamadas que revisar', () => {
@@ -247,10 +302,14 @@ describe('los comandos', () => {
 		// saltea— estarían en verde sin haber comparado nada.
 		//
 		// Se exige el caso completo: una llamada cuyo comando se encontró en
-		// Rust **y** que pasa al menos un argumento. Eso recorre el analizador
-		// entero, que es lo que se rompe.
+		// Rust, que declara al menos un argumento, **y** de la que se
+		// extrajeron claves. Sin lo último, un `invoke('x', {})` alcanzaría
+		// para dar el test por bueno sin haber leído ninguna clave nunca.
 		const completas = invocaciones.filter(
-			(i) => comandos.has(i.comando) && (comandos.get(i.comando)?.length ?? 0) > 0
+			(i) =>
+				comandos.has(i.comando) &&
+				(comandos.get(i.comando)?.length ?? 0) > 0 &&
+				i.claves.length > 0
 		);
 		expect(completas.length).toBeGreaterThan(0);
 	});
