@@ -289,6 +289,10 @@ pub enum ErrorPlan {
     /// En el modo manual y UEFI: se asignó `/boot` a una partición que no es
     /// el ESP. La instalación no arrancaría, y se descubriría al reiniciar.
     ArranqueNoEsEsp { ruta: String },
+    /// En el modo manual: se quiso conservar y montar una partición cifrada.
+    /// Abrir volúmenes LUKS que no son la raíz todavía no se hace, así que
+    /// montarla fallaría a mitad de la instalación.
+    ParticionCifrada { ruta: String },
 }
 
 impl std::fmt::Display for ErrorPlan {
@@ -349,6 +353,10 @@ impl std::fmt::Display for ErrorPlan {
             ErrorPlan::ArranqueNoEsEsp { ruta } => write!(
                 f,
                 "{ruta} no es una partición de sistema EFI, y en UEFI el arranque tiene que serlo"
+            ),
+            ErrorPlan::ParticionCifrada { ruta } => write!(
+                f,
+                "{ruta} está cifrada: todavía no se puede conservar y montar una partición cifrada que no sea la raíz"
             ),
         }
     }
@@ -939,7 +947,11 @@ fn fs_para_archinstall(fs: &str) -> Option<&'static str> {
         "f2fs" => "f2fs",
         "ntfs" => "ntfs",
         "xfs" => "xfs",
-        "crypto_LUKS" => "crypto_LUKS",
+        // `crypto_LUKS` **no** va, aunque archinstall lo tenga en su
+        // enumeración: su propia validación lo rechaza —«Crypto luks cannot be
+        // set as a filesystem type», `filesystem.py:116`— y además no es algo
+        // que se pueda montar. Lo de adentro se monta después de abrir el
+        // volumen, y abrir volúmenes que no son la raíz todavía no se hace.
         _ => return None,
     })
 }
@@ -1027,8 +1039,31 @@ pub fn planificar_manual(
         let es_raiz = punto == "/";
         let es_arranque = punto == "/boot";
 
-        if es_arranque && !existente.es_esp() {
-            return Err(ErrorPlan::ArranqueNoEsEsp {
+        if es_arranque {
+            if !existente.es_esp() {
+                return Err(ErrorPlan::ArranqueNoEsEsp {
+                    ruta: existente.ruta.clone(),
+                });
+            }
+            // El mismo mínimo que en los otros dos modos, y por lo mismo: acá
+            // adentro van el kernel y los dos initramfs. Sin esto, el ESP de
+            // 100 MiB de un Windows pasaba —tiene el GUID correcto— y la
+            // primera actualización de kernel se quedaba sin espacio, que deja
+            // un sistema que no arranca.
+            let mib = existente.tamano_bytes / MIB;
+            if mib < MINIMO_ESP_REUSABLE_MIB {
+                return Err(ErrorPlan::EspChico {
+                    tiene_mib: mib,
+                    minimo_mib: MINIMO_ESP_REUSABLE_MIB,
+                });
+            }
+        }
+
+        // Una partición cifrada que se quiere conservar y montar: no se puede
+        // todavía. Se corta con el motivo en vez de mandarla y que archinstall
+        // muera al montarla, a mitad de la instalación.
+        if !a.formatear && existente.sistema_archivos.as_deref() == Some("crypto_LUKS") {
+            return Err(ErrorPlan::ParticionCifrada {
                 ruta: existente.ruta.clone(),
             });
         }
@@ -2306,6 +2341,58 @@ mod tests {
             ),
             Err(ErrorPlan::Chico { .. })
         ));
+
+        // Una partición desalineada: para formatearla hay que rehacerla, y
+        // rehacerla en otro lado es escribir encima de la de al lado.
+        let mut torcido = disco_repartido();
+        torcido.particiones[3].inicio_bytes += 512;
+        assert_eq!(
+            planificar_manual(
+                &torcido,
+                &[boot(), raiz()],
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::ParticionDesalineada {
+                ruta: "/dev/sda4".into()
+            }
+        );
+
+        // Un ESP de 100 MiB tiene el GUID correcto y no alcanza igual: acá
+        // adentro van el kernel y los dos initramfs.
+        let mut flaco = disco_repartido();
+        flaco.particiones[0].tamano_bytes = 100 * MIB;
+        assert!(matches!(
+            planificar_manual(
+                &flaco,
+                &[boot(), raiz()],
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            ),
+            Err(ErrorPlan::EspChico { .. })
+        ));
+
+        // Y una partición cifrada que se quiere conservar y montar: abrir
+        // volúmenes LUKS que no son la raíz todavía no se hace, así que
+        // montarla fallaría a mitad de la instalación.
+        let mut cifrada = disco_repartido();
+        cifrada.particiones[2].sistema_archivos = Some("crypto_LUKS".into());
+        assert_eq!(
+            planificar_manual(
+                &cifrada,
+                &[boot(), raiz(), asignar("/dev/sda3", Some("/home"), false)],
+                Firmware::Uefi,
+                SistemaArchivos::Btrfs,
+                false
+            )
+            .unwrap_err(),
+            ErrorPlan::ParticionCifrada {
+                ruta: "/dev/sda3".into()
+            }
+        );
 
         // Y en BIOS, nada de esto.
         assert_eq!(

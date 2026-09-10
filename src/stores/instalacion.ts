@@ -128,7 +128,22 @@ export interface VistaPrevia {
  * ya está, y reusa la partición EFI que exista sin formatearla — que es lo
  * único que deja al otro sistema arrancando.
  */
-export type EsquemaDisco = 'borrar_todo' | 'junto_a_otro_sistema' | 'sobre_una_particion';
+export type EsquemaDisco =
+	| 'borrar_todo'
+	| 'junto_a_otro_sistema'
+	| 'sobre_una_particion'
+	| 'manual';
+
+/** Qué hacer con una partición, en el modo manual. */
+export interface AsignacionManual {
+	particion: string;
+	/**
+	 * Dónde se monta. `null` es «no se usa»: se queda como está y no se monta.
+	 * Tiene que ser uno de los que acepta el backend.
+	 */
+	punto_montaje: string | null;
+	formatear: boolean;
+}
 
 /** Un paso de la instalación, tal como lo informa el backend. */
 export interface ProgresoPaso {
@@ -209,6 +224,8 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		esquema: 'borrar_todo' as EsquemaDisco,
 		/** Sobre qué partición se instala. Sólo con `sobre_una_particion`. */
 		particionDestino: '',
+		/** Qué se hace con cada partición. Sólo con `manual`. */
+		asignaciones: [] as AsignacionManual[],
 		sistemaArchivos: 'btrfs' as SistemaArchivos,
 		cifrar: false,
 		zram: true,
@@ -386,6 +403,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 			// archivo de configuración guardado diría algo que no pasó.
 			particion_destino:
 				eleccion.esquema === 'sobre_una_particion' ? eleccion.particionDestino : null,
+			asignaciones: eleccion.esquema === 'manual' ? eleccion.asignaciones : [],
 			sistema_archivos: eleccion.sistemaArchivos,
 			cifrar: eleccion.cifrar,
 			zram: eleccion.zram,
@@ -546,6 +564,10 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 				esquema: eleccion.esquema,
 				particionDestino:
 					eleccion.esquema === 'sobre_una_particion' ? eleccion.particionDestino : null,
+				// Va siempre, aunque el esquema no la mire: Tauri deserializa
+				// los argumentos del comando y una lista que no llega no es una
+				// lista vacía, es un error que rechaza la llamada entera.
+				asignaciones: eleccion.esquema === 'manual' ? eleccion.asignaciones : [],
 				sistemaArchivos: eleccion.sistemaArchivos,
 				cifrar: eleccion.cifrar,
 			});

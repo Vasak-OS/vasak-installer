@@ -358,6 +358,7 @@ resumen:
   campoEsquemaBorrarTodo: Borrar el disco entero
   campoEsquemaJunto: "Instalar al lado de lo que ya está"
   campoEsquemaSobre: "Instalar sobre una partición"
+  campoEsquemaManual: "Particionado manual"
   avisoJuntoTitulo: "No se va a borrar nada de {0}"
   avisoJunto: >-
     Se instala en el espacio libre. Las particiones que ya están no se tocan, y

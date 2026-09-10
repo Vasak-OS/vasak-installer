@@ -358,6 +358,7 @@ resumen:
   campoEsquemaBorrarTodo: Erase the whole disk
   campoEsquemaJunto: "Install alongside what is already there"
   campoEsquemaSobre: "Install onto a partition"
+  campoEsquemaManual: "Manual partitioning"
   avisoJuntoTitulo: "Nothing on {0} will be erased"
   avisoJunto: >-
     It installs into the free space. The existing partitions are left alone, and

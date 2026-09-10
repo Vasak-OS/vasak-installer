@@ -34,6 +34,7 @@ const NOMBRE_DEL_ESQUEMA = {
 	borrar_todo: 'resumen.campoEsquemaBorrarTodo',
 	junto_a_otro_sistema: 'resumen.campoEsquemaJunto',
 	sobre_una_particion: 'resumen.campoEsquemaSobre',
+	manual: 'resumen.campoEsquemaManual',
 } as const;
 
 const nombreDelEsquema = computed(() => NOMBRE_DEL_ESQUEMA[store.eleccion.esquema]);
