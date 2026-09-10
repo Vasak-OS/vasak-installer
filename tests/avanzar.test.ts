@@ -473,3 +473,61 @@ describe('instalar sobre una partición', () => {
 		expect(store.puedeAvanzar('disco')).toBe(true);
 	});
 });
+
+describe('el particionado manual', () => {
+	test('un punto de montaje sólo puede estar en una partición', () => {
+		// Sin esto, elegir `/` en una segunda partición dejaba las dos
+		// asignadas y el plan fallaba con «asignado dos veces», sin que se
+		// entienda que había que sacarlo de la primera a mano.
+		const store = almacenCompleto();
+		store.asignar('/dev/sda1', '/', true);
+		store.asignar('/dev/sda2', '/', true);
+
+		expect(store.eleccion.asignaciones).toEqual([
+			{ particion: '/dev/sda2', punto_montaje: '/', formatear: true },
+		]);
+	});
+
+	test('dejar de usar una partición la saca de la lista', () => {
+		// Una asignación sin punto de montaje y una partición sin asignar
+		// significan lo mismo. Tener las dos formas es tener dos maneras de
+		// escribir el mismo plan, y una de ellas se olvida de limpiar.
+		const store = almacenCompleto();
+		store.asignar('/dev/sda1', '/home', false);
+		expect(store.eleccion.asignaciones).toHaveLength(1);
+
+		store.asignar('/dev/sda1', null, false);
+		expect(store.eleccion.asignaciones).toEqual([]);
+	});
+
+	test('la misma partición no se asigna dos veces', () => {
+		const store = almacenCompleto();
+		store.asignar('/dev/sda1', '/home', false);
+		store.asignar('/dev/sda1', '/srv', true);
+
+		expect(store.eleccion.asignaciones).toEqual([
+			{ particion: '/dev/sda1', punto_montaje: '/srv', formatear: true },
+		]);
+	});
+
+	test('las asignaciones viajan sólo con su esquema', () => {
+		const store = almacenCompleto();
+		store.asignar('/dev/sda1', '/', true);
+
+		expect(store.armarPlan().asignaciones).toEqual([]);
+		store.eleccion.esquema = 'manual';
+		expect(store.armarPlan().asignaciones).toHaveLength(1);
+	});
+
+	test('cambiar de disco olvida las asignaciones', () => {
+		// Son de **ese** disco: al cambiar, sus rutas apuntan a particiones de
+		// otro.
+		const store = almacenCompleto();
+		store.discos = [conParticiones('/dev/sda'), conParticiones('/dev/sdb')];
+		store.eleccion.disco = '/dev/sda';
+		store.asignar('/dev/sda1', '/', true);
+
+		store.eleccion.disco = '/dev/sdb';
+		expect(store.eleccion.asignaciones).toEqual([]);
+	});
+});

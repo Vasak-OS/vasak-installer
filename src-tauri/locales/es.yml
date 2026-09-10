@@ -173,6 +173,13 @@ disco:
   sobreAyuda: >-
     Se formatea sólo la partición que elijas. Las demás no se tocan, y la
     partición de arranque EFI se reusa sin formatearla.
+  manualNombre: "Particionado manual"
+  manualAyuda: >-
+    Elegís vos qué partición va en cada lugar y cuáles se formatean. Lo que no
+    asignes queda como está.
+  manualNoUsar: "No usar"
+  manualFormatear: "Formatear"
+  manualComoEsta: "Se conserva con lo que tenga adentro"
   elegirParticion: "Sobre cuál"
   esParticionDeArranque: "Es la partición de arranque EFI"
   particionChica: "Muy chica"

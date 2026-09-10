@@ -156,6 +156,17 @@ pub fn pasos_de_instalacion() -> Vec<&'static str> {
     Paso::TODOS.iter().map(|p| p.clave()).collect()
 }
 
+/// Los puntos de montaje que se pueden elegir en el particionado manual.
+///
+/// Van desde acá y no escritos en el frontend: son la misma lista contra la
+/// que el planificador valida, y dos copias de una lista es una que se
+/// desactualiza. La que quedara vieja ofrecería un punto que el plan rechaza,
+/// o escondería uno que sí acepta.
+#[tauri::command]
+pub fn puntos_de_montaje() -> Vec<&'static str> {
+    layout::PUNTOS_MANUALES.to_vec()
+}
+
 #[tauri::command]
 pub fn validar_usuario(nombre: String) -> Result<(), ErrorNombre> {
     validar::nombre_de_usuario(&nombre)
@@ -617,6 +628,25 @@ mod tests {
 
         assert!(!vista.particiones[0].cifrada, "el ESP nunca va cifrado");
         assert!(vista.particiones[1].cifrada, "la raíz sí");
+    }
+
+    /// **Los puntos de montaje que ofrece la pantalla son los que el plan
+    /// acepta.**
+    ///
+    /// La lista sale del backend justamente para que no haya dos. Este test
+    /// comprueba que el comando devuelva la de verdad y no una copia: una que
+    /// quedara vieja ofrecería un punto que el planificador rechaza, o
+    /// escondería uno que sí acepta.
+    #[test]
+    fn los_puntos_de_montaje_son_los_del_planificador() {
+        let puntos = puntos_de_montaje();
+        assert_eq!(puntos, layout::PUNTOS_MANUALES);
+        assert!(puntos.contains(&"/"), "sin raíz no hay dónde instalar");
+        assert!(puntos.contains(&"/boot"), "sin arranque no arranca");
+        assert!(
+            puntos.iter().all(|p| p.starts_with('/')),
+            "un punto de montaje relativo no se puede montar: {puntos:?}"
+        );
     }
 
     #[test]
