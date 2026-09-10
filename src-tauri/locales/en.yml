@@ -172,6 +172,13 @@ disco:
   sobreAyuda: >-
     Only the partition you pick gets formatted. The rest are left alone, and the
     EFI boot partition is reused without formatting it.
+  manualNombre: "Manual partitioning"
+  manualAyuda: >-
+    You pick which partition goes where and which ones get formatted. Anything
+    you leave unassigned stays as it is.
+  manualNoUsar: "Do not use"
+  manualFormatear: "Format"
+  manualComoEsta: "Kept with whatever is on it"
   elegirParticion: "Which one"
   esParticionDeArranque: "This is the EFI boot partition"
   particionChica: "Too small"

@@ -203,6 +203,15 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	 * decirlos, o la opción queda elegida sin que pase nada.
 	 */
 	const errorVistaPrevia = ref<string | null>(null);
+	/**
+	 * Los puntos de montaje que se pueden elegir a mano.
+	 *
+	 * Vienen del backend y no escritos acá: son la misma lista contra la que el
+	 * planificador valida, y dos copias de una lista es una que se
+	 * desactualiza. Vacía hasta que contesta, que es cuando la pantalla del
+	 * modo manual todavía no se puede usar de todos modos.
+	 */
+	const puntosDeMontaje = ref<string[]>([]);
 	const complementos = ref<Complementos>({
 		catalogo: [],
 		categorias: [],
@@ -317,6 +326,7 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 			// La partición elegida es de **este** disco: al cambiar de disco no
 			// existe más, y dejarla puesta mandaría una ruta de otro disco.
 			eleccion.particionDestino = '';
+			eleccion.asignaciones = [];
 			if ((disco?.particiones.length ?? 0) === 0) {
 				eleccion.esquema = 'borrar_todo';
 			}
@@ -549,6 +559,45 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 	 */
 	let vistaPreviaEnVuelo = 0;
 
+	async function cargarPuntosDeMontaje() {
+		if (puntosDeMontaje.value.length > 0) return;
+		try {
+			puntosDeMontaje.value = await invoke<string[]>('puntos_de_montaje');
+		} catch {
+			// Sin la lista, el modo manual no se puede ofrecer. No es un error
+			// de la instalación: los otros tres esquemas siguen andando.
+			puntosDeMontaje.value = [];
+		}
+	}
+
+	/** Lo que se decidió para una partición, o `undefined` si nada. */
+	function asignacionDe(particion: string): AsignacionManual | undefined {
+		return eleccion.asignaciones.find((a) => a.particion === particion);
+	}
+
+	/**
+	 * Decide qué hacer con una partición.
+	 *
+	 * `punto` en `null` la saca de la lista en vez de dejarla con un punto
+	 * vacío: una asignación sin punto de montaje y una partición sin asignar
+	 * significan lo mismo —«no se usa»— y tener las dos formas es tener dos
+	 * maneras de escribir el mismo plan.
+	 */
+	function asignar(particion: string, punto: string | null, formatear: boolean) {
+		const resto = eleccion.asignaciones.filter((a) => a.particion !== particion);
+		if (punto === null) {
+			eleccion.asignaciones = resto;
+			return;
+		}
+		// Un punto de montaje sólo puede estar en una partición. Sacarlo de la
+		// anterior es lo que hace que elegir `/` en otra no dé el error de
+		// «asignado dos veces» sin que se entienda por qué.
+		eleccion.asignaciones = [
+			...resto.filter((a) => a.punto_montaje !== punto),
+			{ particion, punto_montaje: punto, formatear },
+		];
+	}
+
 	async function calcularVistaPrevia() {
 		const mia = ++vistaPreviaEnVuelo;
 		if (!eleccion.disco) {
@@ -640,6 +689,10 @@ export const useInstalacionStore = defineStore('instalacion', () => {
 		catalogos,
 		vistaPrevia,
 		errorVistaPrevia,
+		puntosDeMontaje,
+		cargarPuntosDeMontaje,
+		asignacionDe,
+		asignar,
 		ayudanteListo,
 		errorAyudante,
 		eleccion,

@@ -60,6 +60,7 @@ pub fn run() {
             commands::catalogos,
             commands::complementos_disponibles,
             commands::pasos_de_instalacion,
+            commands::puntos_de_montaje,
             commands::validar_usuario,
             commands::validar_equipo,
             commands::sugerir_usuario,

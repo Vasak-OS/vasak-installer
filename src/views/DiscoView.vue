@@ -36,6 +36,7 @@ const esquemas: { valor: EsquemaDisco; nombre: string; ayuda: string }[] = [
 	},
 	{ valor: 'junto_a_otro_sistema', nombre: 'disco.juntoNombre', ayuda: 'disco.juntoAyuda' },
 	{ valor: 'sobre_una_particion', nombre: 'disco.sobreNombre', ayuda: 'disco.sobreAyuda' },
+	{ valor: 'manual', nombre: 'disco.manualNombre', ayuda: 'disco.manualAyuda' },
 ];
 
 /** Cómo se llama cada rol en la vista previa. */
@@ -91,6 +92,34 @@ const soloUefi = computed(() => store.vistaPrevia?.firmware === 'bios');
 /** Si hay que mostrar la lista de particiones para elegir una. */
 const eligeParticion = computed(() => store.eleccion.esquema === 'sobre_una_particion');
 
+/** Si hay que mostrar la tabla de asignaciones. */
+const esManual = computed(() => store.eleccion.esquema === 'manual');
+
+/**
+ * El punto de montaje elegido para una partición, o `''` si ninguno.
+ *
+ * `''` y no `null` porque es lo que un `<select>` devuelve cuando se elige la
+ * opción vacía, y traducir en los dos sentidos en la plantilla la vuelve
+ * ilegible.
+ */
+function puntoDe(ruta: string): string {
+	return store.asignacionDe(ruta)?.punto_montaje ?? '';
+}
+
+function seFormatea(ruta: string): boolean {
+	return store.asignacionDe(ruta)?.formatear ?? false;
+}
+
+function elegirPunto(ruta: string, punto: string) {
+	store.asignar(ruta, punto === '' ? null : punto, seFormatea(ruta));
+}
+
+function alternarFormateo(ruta: string, formatear: boolean) {
+	const punto = puntoDe(ruta);
+	if (punto === '') return;
+	store.asignar(ruta, punto, formatear);
+}
+
 const sistemasDeArchivos: { valor: SistemaArchivos; nombre: string; ayuda: string }[] = [
 	{ valor: 'btrfs', nombre: 'disco.btrfsNombre', ayuda: 'disco.btrfsAyuda' },
 	{ valor: 'ext4', nombre: 'disco.ext4Nombre', ayuda: 'disco.ext4Ayuda' },
@@ -130,6 +159,10 @@ watch(
 );
 
 onMounted(async () => {
+	// La lista de puntos de montaje, que vive en el backend para que no haya
+	// dos copias. No bloquea: sin ella el modo manual queda sin opciones y los
+	// otros tres siguen andando.
+	await store.cargarPuntosDeMontaje();
 	// Acá es donde por primera vez hace falta root, y donde ya se entiende para
 	// qué. Si la autorización se rechaza, el paso sigue funcionando —la lista de
 	// discos sale igual, sin los nombres de los sistemas instalados— y el aviso
@@ -251,6 +284,63 @@ onMounted(async () => {
         <p v-if="soloUefi" class="mt-2 text-tx-muted text-xs">
           {{ t('disco.juntoSoloUefi') }}
         </p>
+
+        <!--
+          El modo manual: una fila por partición, con dónde se monta y si se
+          formatea. Se muestran todas, incluida la de arranque EFI: en este
+          modo hay que poder elegirla, que es lo que la distingue de los otros.
+        -->
+        <div v-if="esManual" class="mt-3 space-y-2">
+          <div
+            v-for="particion in store.discoElegido?.particiones ?? []"
+            :key="particion.ruta"
+            class="rounded-corner border border-ui-border-strong p-2"
+          >
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span class="font-mono">{{ particion.ruta }}</span>
+              <span class="text-tx-muted">{{ tamano(particion.tamano_bytes) }}</span>
+              <span class="text-tx-muted text-xs">
+                {{ particion.sistema_operativo ?? particion.sistema_archivos ?? t('disco.sinFormato') }}
+              </span>
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-2 text-sm">
+                <span class="text-tx-muted">{{ t('disco.elegirParticion') }}</span>
+                <select
+                  class="rounded-corner border border-ui-border-strong bg-ui-surface/40 px-2 py-1 font-mono text-sm"
+                  :value="puntoDe(particion.ruta)"
+                  @change="elegirPunto(particion.ruta, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">{{ t('disco.manualNoUsar') }}</option>
+                  <option v-for="punto in store.puntosDeMontaje" :key="punto" :value="punto">
+                    {{ punto }}
+                  </option>
+                </select>
+              </label>
+
+              <!-- Sin punto de montaje no hay nada que formatear: la partición
+                   no se usa, y ofrecer el interruptor sugeriría que sí. -->
+              <label
+                v-if="puntoDe(particion.ruta) !== ''"
+                class="flex items-center gap-2 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  :checked="seFormatea(particion.ruta)"
+                  @change="alternarFormateo(particion.ruta, ($event.target as HTMLInputElement).checked)"
+                />
+                {{ t('disco.manualFormatear') }}
+              </label>
+              <span
+                v-if="puntoDe(particion.ruta) !== '' && !seFormatea(particion.ruta)"
+                class="text-tx-muted text-xs"
+              >
+                {{ t('disco.manualComoEsta') }}
+              </span>
+            </div>
+          </div>
+        </div>
 
         <!-- Cuál se formatea. Sólo con ese esquema: en los otros dos no hay
              nada que elegir, y una lista de más es una lista que alguien lee
