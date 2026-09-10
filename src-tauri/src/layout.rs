@@ -924,6 +924,7 @@ fn opciones_de_montaje(fs: SistemaArchivos, disco: &Disco) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::{any, Strategy};
 
     fn disco_de(tamano_gib: u64) -> Disco {
         Disco {
@@ -1330,6 +1331,57 @@ mod tests {
         );
     }
 
+    /// **De varios huecos libres se usa el más grande.**
+    ///
+    /// Elegir cualquiera da un plan válido —no pisa nada, no se sale del
+    /// disco— así que ninguna de las propiedades lo agarra. Pero instalar en
+    /// 21 GiB teniendo 400 libres al lado es de las cosas que se descubren
+    /// meses después, cuando ya no entra nada y mover la partición es un
+    /// problema.
+    #[test]
+    fn de_varios_huecos_se_usa_el_mas_grande() {
+        let mut disco = disco_de(500);
+        let mib = MIB;
+        // ESP, un hueco de 30 GiB, una partición, y el resto libre: ~440 GiB.
+        disco.particiones = vec![
+            ParticionExistente {
+                ruta: "/dev/sda1".into(),
+                inicio_bytes: mib,
+                tamano_bytes: 512 * mib,
+                sistema_archivos: Some("vfat".into()),
+                etiqueta: None,
+                numero: Some(1),
+                tipo_particion: Some(GUID_ESP.into()),
+                sistema_operativo: None,
+            },
+            ParticionExistente {
+                ruta: "/dev/sda2".into(),
+                // Deja 30 GiB de hueco entre el ESP y ésta.
+                inicio_bytes: (513 + 30 * 1024) * mib,
+                tamano_bytes: 20 * 1024 * mib,
+                sistema_archivos: Some("ntfs".into()),
+                etiqueta: None,
+                numero: Some(2),
+                tipo_particion: Some("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7".into()),
+                sistema_operativo: Some("Windows 11".into()),
+            },
+        ];
+
+        let plan =
+            planificar_junto_a(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let raiz = plan.particiones.iter().find(|p| p.rol == Rol::Raiz).unwrap();
+
+        // El hueco de atrás son ~449 GiB; el de adelante, 30. Elegir el chico
+        // daría una raíz de 30 GiB, que entra en el mínimo y por eso ninguna
+        // propiedad se queja.
+        assert!(
+            raiz.tamano_mib > 400 * 1024,
+            "la raíz quedó de {} MiB: se eligió el hueco chico",
+            raiz.tamano_mib
+        );
+        assert!(plan.a_destruir(&disco).is_empty());
+    }
+
     /// **Sobre una partición, en un disco que no tiene ESP.**
     ///
     /// Es la rama de `planificar_sobre` que **crea** el ESP, y no la tocaba
@@ -1725,4 +1777,356 @@ mod tests {
         // de trabajo del instalador.
         assert!(SUBVOLUMENES.iter().all(|(_, p)| p.starts_with('/')));
     }
+    // ── Propiedades ─────────────────────────────────────────────────────────
+    //
+    // Los tests de arriba dicen cada uno un caso. Éstos dicen lo que tiene que
+    // valer **siempre**, en cualquier disco y con cualquier modo, y es lo que
+    // corresponde en el único código del instalador cuyo error borra datos.
+    //
+    // Escritos antes del particionado manual a propósito: cuando alguien pueda
+    // armar el plan a mano, esto es lo que va a impedir que se lleve puesto un
+    // disco ajeno.
+
+    /// Un disco con particiones ya usadas, alineadas y sin solaparse.
+    ///
+    /// Generado y no al azar: una lista de `(inicio, tamaño)` cualquiera casi
+    /// nunca da particiones válidas, y con particiones inválidas las
+    /// propiedades pasan sin haber probado nada. Acá se generan huecos y
+    /// tamaños en MiB y se van encadenando, que es como las hace un
+    /// particionador de verdad.
+    fn un_disco_usado() -> impl Strategy<Value = Disco> {
+        // Hasta seis particiones, cada una con el hueco que la precede.
+        (
+            20u64..2048,                                    // tamaño del disco en GiB
+            proptest::collection::vec((0u64..4096, 1u64..60_000, 0usize..3), 0..6),
+            any::<bool>(),                                  // ¿hay ESP?
+            512u64..=4096,
+        )
+            .prop_map(|(gib, tramos, con_esp, sector)| {
+                let sector = if sector <= 512 { 512 } else { 4096 };
+                let total_mib = gib * 1024;
+                let mut particiones = Vec::new();
+                let mut cursor = INICIO_MIB;
+
+                if con_esp {
+                    particiones.push(ParticionExistente {
+                        ruta: "/dev/sda1".into(),
+                        inicio_bytes: cursor * MIB,
+                        tamano_bytes: 512 * MIB,
+                        sistema_archivos: Some("vfat".into()),
+                        etiqueta: Some("SYSTEM".into()),
+                        numero: Some(1),
+                        tipo_particion: Some(GUID_ESP.into()),
+                        sistema_operativo: None,
+                    });
+                    cursor += 512;
+                }
+
+                for (hueco, tamano, tipo) in tramos {
+                    cursor += hueco;
+                    // Se para al llegar al final: el último MiB es la copia de
+                    // la tabla GPT y ahí no va nada.
+                    if cursor + tamano + RESERVA_FINAL_MIB > total_mib {
+                        break;
+                    }
+                    let n = particiones.len() + 1;
+                    particiones.push(ParticionExistente {
+                        ruta: format!("/dev/sda{n}"),
+                        inicio_bytes: cursor * MIB,
+                        tamano_bytes: tamano * MIB,
+                        sistema_archivos: match tipo {
+                            0 => Some("ntfs".into()),
+                            1 => Some("ext4".into()),
+                            _ => None,
+                        },
+                        etiqueta: None,
+                        numero: Some(n as u32),
+                        tipo_particion: Some("0fc63daf-8483-4772-8e79-3d69d8477de4".into()),
+                        sistema_operativo: if tipo == 0 {
+                            Some("Windows 11".into())
+                        } else {
+                            None
+                        },
+                        });
+                    cursor += tamano;
+                }
+
+                Disco {
+                    ruta: "/dev/sda".into(),
+                    modelo: "Disco generado".into(),
+                    tamano_bytes: total_mib * MIB,
+                    sector_logico: sector,
+                    rotacional: false,
+                    nvme: true,
+                    en_uso: false,
+                    particiones,
+                }
+            })
+    }
+
+    /// Todos los planes que un disco admite, con el esquema que los produjo.
+    fn planes_de(disco: &Disco, fs: SistemaArchivos, cifrar: bool) -> Vec<(&'static str, Plan)> {
+        let mut salida = Vec::new();
+        for (nombre, esquema, particion) in [
+            ("borrar", EsquemaDisco::BorrarTodo, None),
+            ("al lado", EsquemaDisco::JuntoAOtroSistema, None),
+        ] {
+            if let Ok(p) = planificar_con(
+                disco,
+                esquema,
+                particion,
+                Firmware::Uefi,
+                fs,
+                cifrar,
+            ) {
+                salida.push((nombre, p));
+            }
+        }
+        // Y uno por cada partición que se podría elegir como destino.
+        for e in &disco.particiones {
+            if let Ok(p) = planificar_sobre(disco, &e.ruta, Firmware::Uefi, fs, cifrar) {
+                salida.push(("sobre", p));
+            }
+        }
+        salida
+    }
+
+    /// **Que el generador produzca discos con los que se pueda hacer algo.**
+    ///
+    /// Sin esto las cinco propiedades de abajo pueden estar en verde sin haber
+    /// probado nada: si `planes_de` devolviera la lista vacía siempre —porque
+    /// el generador arma discos que ningún modo acepta— cada `for` no daría ni
+    /// una vuelta y todo pasaría.
+    ///
+    /// Se corre una sola vez con muchas muestras y se mide, en vez de afirmarlo
+    /// adentro de cada propiedad, que ahí sería ruido en cada caso.
+    #[test]
+    fn el_generador_de_discos_llega_a_los_tres_modos() {
+        use proptest::strategy::{Strategy as _, ValueTree};
+        use proptest::test_runner::TestRunner;
+
+        let mut runner = TestRunner::deterministic();
+        let estrategia = un_disco_usado();
+        let (mut con_esp_ajeno, mut con_sobre, mut con_al_lado, mut total) = (0, 0, 0, 0);
+
+        for _ in 0..300 {
+            let disco = estrategia.new_tree(&mut runner).unwrap().current();
+            if disco.particiones.iter().any(|p| p.es_esp()) {
+                con_esp_ajeno += 1;
+            }
+            for (nombre, _) in planes_de(&disco, SistemaArchivos::Btrfs, false) {
+                total += 1;
+                match nombre {
+                    "sobre" => con_sobre += 1,
+                    "al lado" => con_al_lado += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(total > 300, "sólo {total} planes en 300 discos: casi todos vacíos");
+        assert!(con_sobre > 20, "sólo {con_sobre} planes «sobre una partición»");
+        assert!(con_al_lado > 20, "sólo {con_al_lado} planes «al lado»");
+        assert!(
+            con_esp_ajeno > 50,
+            "sólo {con_esp_ajeno} discos con ESP ajeno: la propiedad del ESP no probaría nada"
+        );
+    }
+
+    proptest::proptest! {
+        /// **Nada que el plan no declare destruido se toca.**
+        ///
+        /// La invariante que sostiene toda la pantalla de confirmación: lo que
+        /// se le muestra a la persona es `a_destruir`, y si el plan pisara algo
+        /// que no está en esa lista, se perdería sin que nadie lo hubiera
+        /// aceptado.
+        ///
+        /// Se comprueba por geometría, que es lo que archinstall va a ejecutar,
+        /// y no por la ruta: una partición se pierde igual si la pisan sin
+        /// nombrarla.
+        ///
+        /// Cada acción tiene su regla, porque «pisar» no quiere decir lo mismo
+        /// en las tres:
+        ///
+        ///   - `Conservar` **es** una partición que ya está, no la pisa. Se
+        ///     saltea, pero se comprueba que la que dice conservar exista y sea
+        ///     exactamente ésa.
+        ///   - `Formatear` destruye la que nombra, así que tiene que estar
+        ///     declarada — y no puede pisar ninguna otra.
+        ///   - `Crear` no puede pisar nada, porque va en espacio libre.
+        #[test]
+        fn ningun_plan_pisa_lo_que_no_declara(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                if plan.borrar_disco {
+                    continue; // Ahí se declara todo, y no hay nada que respetar.
+                }
+                let declaradas: Vec<&str> = plan
+                    .a_destruir(&disco)
+                    .iter()
+                    .map(|p| p.ruta.as_str())
+                    .collect();
+
+                for p in &plan.particiones {
+                    let inicio = p.inicio_mib * MIB;
+                    let fin = inicio + p.tamano_mib * MIB;
+
+                    if p.accion == Accion::Formatear {
+                        let ruta = p.ruta.as_deref().unwrap_or("");
+                        proptest::prop_assert!(
+                            declaradas.contains(&ruta),
+                            "{nombre}: formatea {ruta} y no lo declara. declaradas={declaradas:?}"
+                        );
+                    }
+
+                    for e in &disco.particiones {
+                        if !(inicio < e.fin_bytes() && e.inicio_bytes < fin) {
+                            continue;
+                        }
+                        match p.accion {
+                            // La que se conserva tiene que ser exactamente ésa
+                            // y no una que se le solape: solaparse con otra
+                            // querría decir que la geometría se copió mal.
+                            Accion::Conservar => proptest::prop_assert_eq!(
+                                p.ruta.as_deref(), Some(e.ruta.as_str()),
+                                "{}: dice conservar {:?} y se solapa con {}",
+                                nombre, p.ruta, e.ruta
+                            ),
+                            Accion::Formatear => proptest::prop_assert_eq!(
+                                p.ruta.as_deref(), Some(e.ruta.as_str()),
+                                "{}: formatea {:?} y además pisa {}",
+                                nombre, p.ruta, e.ruta
+                            ),
+                            Accion::Crear => proptest::prop_assert!(
+                                false,
+                                "{nombre}: crea una partición encima de {}. plan={:?}",
+                                e.ruta, plan.particiones
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+
+        /// **Ningún plan se sale del disco ni pisa la copia de la tabla GPT.**
+        ///
+        /// El último MiB es donde GPT guarda su copia de respaldo. Una
+        /// partición que llegue hasta ahí deja una tabla que algunos firmwares
+        /// rechazan, y el equipo no arranca.
+        #[test]
+        fn ningun_plan_se_pasa_del_final(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                for p in &plan.particiones {
+                    let fin = (p.inicio_mib + p.tamano_mib) * MIB;
+                    proptest::prop_assert!(
+                        fin <= disco.tamano_bytes - MIB,
+                        "{nombre}: {p:?} termina en {fin} y el disco tiene {}",
+                        disco.tamano_bytes
+                    );
+                    proptest::prop_assert!(
+                        p.inicio_mib >= INICIO_MIB,
+                        "{nombre}: {p:?} empieza encima de la tabla"
+                    );
+                    proptest::prop_assert!(p.tamano_mib > 0, "{nombre}: {p:?} vacía");
+                }
+            }
+        }
+
+        /// **Las particiones de un plan no se pisan entre sí.**
+        ///
+        /// archinstall lo valida —«Partitions overlap»— pero recién al empezar,
+        /// que en el modo destructivo es con la tabla ya borrada.
+        #[test]
+        fn ningun_plan_se_pisa_a_si_mismo(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                let mut ordenadas = plan.particiones.clone();
+                ordenadas.sort_by_key(|p| p.inicio_mib);
+                for par in ordenadas.windows(2) {
+                    proptest::prop_assert!(
+                        par[0].inicio_mib + par[0].tamano_mib <= par[1].inicio_mib,
+                        "{nombre}: {:?} y {:?} se pisan",
+                        par[0], par[1]
+                    );
+                }
+            }
+        }
+
+        /// **Todo plan tiene arranque, y el arranque nunca va cifrado.**
+        ///
+        /// Lo primero lo exige archinstall: `add_bootloader` busca una partición
+        /// con la bandera `boot` **y** punto de montaje, y sin ella la
+        /// instalación muere al llegar al cargador — con el disco ya formateado.
+        ///
+        /// Lo segundo es peor si falla: el firmware tiene que poder leer el ESP
+        /// para arrancar, así que cifrarlo da un equipo que no enciende.
+        #[test]
+        fn todo_plan_arranca_y_el_esp_va_en_claro(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                let arranque = plan
+                    .particiones
+                    .iter()
+                    .find(|p| p.banderas.contains(&"boot") && p.punto_montaje.is_some());
+                proptest::prop_assert!(
+                    arranque.is_some(),
+                    "{nombre}: ninguna partición con bandera boot y punto de montaje: {:?}",
+                    plan.particiones
+                );
+                let arranque = arranque.unwrap();
+                proptest::prop_assert!(!arranque.cifrada, "{nombre}: el arranque va cifrado");
+                proptest::prop_assert!(
+                    arranque.sistema_archivos.is_some(),
+                    "{nombre}: sin sistema de archivos, archinstall muere en safe_fs_type"
+                );
+            }
+        }
+
+        /// **Un ESP que ya existía nunca se formatea.**
+        ///
+        /// Es lo único que separa un dual boot que anda de un Windows que ya no
+        /// arranca. Vale para los dos modos no destructivos, y por eso se
+        /// comprueba sobre todos los planes en vez de en cada uno.
+        #[test]
+        fn un_esp_ajeno_nunca_se_formatea(
+            disco in un_disco_usado(),
+            cifrar in any::<bool>(),
+        ) {
+            let ajenos: Vec<&str> = disco
+                .particiones
+                .iter()
+                .filter(|p| p.es_esp())
+                .map(|p| p.ruta.as_str())
+                .collect();
+            if ajenos.is_empty() {
+                return Ok(());
+            }
+            for (nombre, plan) in planes_de(&disco, SistemaArchivos::Btrfs, cifrar) {
+                if plan.borrar_disco {
+                    continue;
+                }
+                for p in &plan.particiones {
+                    if let Some(ruta) = p.ruta.as_deref() {
+                        if ajenos.contains(&ruta) {
+                            proptest::prop_assert_eq!(
+                                p.accion, Accion::Conservar,
+                                "{}: el ESP {} no se conserva", nombre, ruta
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 }

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7be6686e3718bcf4f5f16114b55139c5704ae0e717b6766515cbd72a2bcac77d # shrinks to disco = Disco { ruta: "/dev/sda", modelo: "Disco generado", tamano_bytes: 22548578304, sector_logico: 512, rotacional: false, nvme: true, en_uso: false, particiones: [ParticionExistente { ruta: "/dev/sda1", inicio_bytes: 1048576, tamano_bytes: 536870912, sistema_archivos: Some("vfat"), etiqueta: Some("SYSTEM"), numero: Some(1), tipo_particion: Some("c12a7328-f81f-11d2-ba4b-00a0c93ec93b"), sistema_operativo: None }] }, cifrar = false
+cc a24021bf350d20103b9fb065bf7c948526dc6dd46b1c3da7e2ca07185233ea4e # shrinks to disco = Disco { ruta: "/dev/sda", modelo: "Disco generado", tamano_bytes: 23622320128, sector_logico: 512, rotacional: false, nvme: true, en_uso: false, particiones: [] }, cifrar = false
