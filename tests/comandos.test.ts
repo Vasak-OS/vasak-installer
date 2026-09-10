@@ -8,7 +8,7 @@
  * Pasó de verdad, y es el motivo de que este archivo exista: al sumarle
  * `asignaciones` a `vista_previa_particionado` se cambió la firma en Rust y no
  * la llamada en TypeScript. `cargo test`, `cargo clippy`, `vue-tsc` y `biome`
- * pasaron los cinco en verde, y los 106 tests del frontend también — porque
+ * pasaron los cinco en verde, y los tests del frontend también — porque
  * ninguno cruza el borde del `invoke`. La vista previa del particionado quedó
  * rota para **todos** los esquemas, que es la pantalla anterior al punto sin
  * retorno.
@@ -44,13 +44,17 @@ function comandosDeRust(): Map<string, string[]> {
 	)) {
 		const [, nombre, firma] = m;
 		const args: string[] = [];
-		// Un argumento por línea, que es como los formatea rustfmt.
-		for (const linea of firma.split('\n')) {
-			const a = linea.match(/^\s*(\w+)\s*:\s*(.+?),?\s*$/);
+		// Por comas de primer nivel y no por línea. «Un argumento por línea»
+		// fue la primera versión y sólo vale cuando rustfmt tuvo que partir la
+		// firma: `fn x(app: AppHandle, text: String)` entra en una línea y
+		// daba cero argumentos, así que el test no comprobaba nada de esos
+		// comandos — y acusaba de sobrantes los que la llamada sí pasaba.
+		for (const parametro of porComas(firma)) {
+			const a = parametro.match(/^\s*(?:mut\s+)?(\w+)\s*:\s*([\s\S]+)$/);
 			if (!a) continue;
 			const [, arg, tipo] = a;
 			// Los que inyecta Tauri, no el frontend.
-			if (/AppHandle|Window|State|Runtime/.test(tipo)) continue;
+			if (/AppHandle|Window|State|Runtime|Emitter/.test(tipo)) continue;
 			args.push(arg);
 		}
 		comandos.set(nombre, args);
@@ -66,12 +70,23 @@ function comandosDeRust(): Map<string, string[]> {
  * —`{ nombre: x }`, que es la mitad de las llamadas— no daba ninguna clave y el
  * test acusaba cinco comandos que estaban perfectos. Un test que da falsos
  * positivos se termina ignorando, que es peor que no tenerlo.
+ *
+ * Devuelve `null` cuando el objeto trae un `...spread` de primer nivel: ahí no
+ * se puede saber qué claves lleva y hay que saltear la llamada entera. Se
+ * detecta recorriendo y no con un `includes('...')`, que también casaría con
+ * los puntos suspensivos adentro de una cadena o de un comentario y haría
+ * saltear una llamada perfectamente analizable — escondiendo justo el
+ * desfasaje que este archivo busca.
  */
-function clavesDe(cuerpo: string): string[] {
+function clavesDe(cuerpo: string): string[] | null {
 	const claves: string[] = [];
 	let nivel = 0;
 	let comilla: string | null = null;
 	let token = '';
+	// Si ya vimos los dos puntos de esta entrada. Lo que sigue es el valor y
+	// no una clave; sin esto, la forma abreviada se confundiría con el valor
+	// de la entrada anterior.
+	let enElValor = false;
 
 	for (let i = 0; i < cuerpo.length; i++) {
 		const c = cuerpo[i];
@@ -111,17 +126,60 @@ function clavesDe(cuerpo: string): string[] {
 		}
 		if (nivel > 0) continue;
 
+		// `...` fuera de una cadena y en el primer nivel: es un spread.
+		if (c === '.' && cuerpo.slice(i, i + 3) === '...') {
+			return null;
+		}
+
 		if (c === ':') {
 			const clave = token.trim();
 			if (/^\w+$/.test(clave)) claves.push(clave);
 			token = '';
+			enElValor = true;
 		} else if (c === ',') {
+			// `{ profile }` en vez de `{ profile: profile }`. Es la mitad de
+			// las llamadas del repositorio, y sin esto el test las acusaba a
+			// todas de no pasar el argumento que sí pasan.
+			if (!enElValor) anotarAbreviada(token, claves);
 			token = '';
+			enElValor = false;
 		} else {
 			token += c;
 		}
 	}
+	// La última entrada no termina en coma.
+	if (!enElValor) anotarAbreviada(token, claves);
 	return claves;
+}
+
+/** Una clave en forma abreviada, si el token lo es. */
+function anotarAbreviada(token: string, claves: string[]) {
+	const clave = token.trim();
+	if (/^\w+$/.test(clave)) claves.push(clave);
+}
+
+/**
+ * Parte una lista de parámetros por sus comas de primer nivel.
+ *
+ * Contando anidamiento, porque un tipo puede traer comas adentro:
+ * `State<'_, Mutex<Foo>>` o `[u8; 4]`.
+ */
+function porComas(firma: string): string[] {
+	const partes: string[] = [];
+	let nivel = 0;
+	let actual = '';
+	for (const c of firma) {
+		if ('<([{'.includes(c)) nivel++;
+		else if ('>)]}'.includes(c)) nivel--;
+		if (c === ',' && nivel === 0) {
+			partes.push(actual);
+			actual = '';
+			continue;
+		}
+		actual += c;
+	}
+	if (actual.trim()) partes.push(actual);
+	return partes;
 }
 
 /** Los archivos donde puede haber un `invoke`. */
@@ -142,14 +200,25 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 		const texto = readFileSync(archivo, 'utf8');
 		for (const m of texto.matchAll(/invoke(?:<[^>]*>)?\(\s*'([^']+)'\s*(,)?/g)) {
 			const [, comando, hayArgs] = m;
+			// `plugin:nombre|comando` es de un plugin de Tauri: su firma vive
+			// en otro crate y acá no se puede comparar contra nada.
+			if (comando.includes('|')) continue;
 			if (!hayArgs) {
 				salida.push({ archivo, comando, claves: [] });
 				continue;
 			}
 			// El objeto que sigue, contando llaves para encontrar su final.
-			const desde = texto.indexOf('{', m.index + m[0].length);
-			if (desde === -1) {
-				salida.push({ archivo, comando, claves: [] });
+			//
+			// Tiene que empezar **acá mismo**. Buscar el `{` más próximo en
+			// todo el archivo fue la primera versión, y con
+			// `invoke('x', args)` —donde los argumentos son una variable— se
+			// iba a buscar el objeto de la llamada siguiente y acusaba de
+			// faltantes las claves de otra.
+			let desde = m.index + m[0].length;
+			while (desde < texto.length && /\s/.test(texto[desde])) desde++;
+			if (texto[desde] !== '{') {
+				// Los argumentos son una variable: no se puede saber qué
+				// lleva, y adivinar da acusaciones falsas.
 				continue;
 			}
 			let nivel = 0;
@@ -158,7 +227,11 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 				if (texto[hasta] === '{') nivel++;
 				else if (texto[hasta] === '}' && --nivel === 0) break;
 			}
-			salida.push({ archivo, comando, claves: clavesDe(texto.slice(desde + 1, hasta)) });
+			const claves = clavesDe(texto.slice(desde + 1, hasta));
+			// `null` es un `...spread`: no se puede saber qué claves lleva, y
+			// adivinar daría acusaciones falsas.
+			if (claves === null) continue;
+			salida.push({ archivo, comando, claves });
 		}
 	}
 	return salida;
@@ -166,6 +239,49 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 
 const comandos = comandosDeRust();
 const invocaciones = llamadas();
+
+describe('el lector de claves', () => {
+	// El analizador de este archivo se equivocó cinco veces mientras se
+	// escribía, y cada vez de una forma que no se veía en el repositorio donde
+	// estaba: objetos en una sola línea, la forma abreviada, un `{` buscado
+	// demasiado lejos, comentarios con dos puntos, y puntos suspensivos
+	// adentro de una cadena. Estos casos son cada uno de ésos, escritos
+	// directo contra la función, para que el próximo se vea sin tener que
+	// portar el archivo a otro repositorio.
+
+	test('la forma normal y la abreviada', () => {
+		expect(clavesDe(' a: 1, b, c: 3 ')).toEqual(['a', 'b', 'c']);
+		expect(clavesDe(' profile ')).toEqual(['profile']);
+	});
+
+	test('un ternario no aporta claves', () => {
+		expect(clavesDe(" x: a === 'b' ? c : null ")).toEqual(['x']);
+	});
+
+	test('un comentario con dos puntos no se come la clave que sigue', () => {
+		expect(clavesDe(' // Tauri deserializa: los argumentos\n nombre: x ')).toEqual([
+			'nombre',
+		]);
+	});
+
+	test('un spread hace que la llamada no se pueda analizar', () => {
+		expect(clavesDe(' ...base, extra: 1 ')).toBeNull();
+	});
+
+	test('pero unos puntos suspensivos en una cadena, no', () => {
+		// Era un salteo falso: la llamada se descartaba entera, y con ella
+		// cualquier desfasaje de sus argumentos.
+		expect(clavesDe(" texto: '...' ")).toEqual(['texto']);
+		expect(clavesDe(' // esto sigue...\n nombre: x ')).toEqual(['nombre']);
+	});
+
+	test('las claves anidadas no cuentan', () => {
+		expect(clavesDe(' plan: { disco: 1, cifrar: true }, otro: 2 ')).toEqual([
+			'plan',
+			'otro',
+		]);
+	});
+});
 
 describe('los comandos', () => {
 	test('hay comandos y llamadas que revisar', () => {
@@ -178,6 +294,24 @@ describe('los comandos', () => {
 			.filter((i) => !comandos.has(i.comando))
 			.map((i) => `${i.archivo}: ${i.comando}`);
 		expect(faltantes).toEqual([]);
+	});
+
+	test('la comparación llega a compararse con algo', () => {
+		// Todas las comprobaciones de abajo recorren listas: si `invocaciones`
+		// quedara vacío —porque cambió la forma de llamar, o porque todo se
+		// saltea— estarían en verde sin haber comparado nada.
+		//
+		// Se exige el caso completo: una llamada cuyo comando se encontró en
+		// Rust, que declara al menos un argumento, **y** de la que se
+		// extrajeron claves. Sin lo último, un `invoke('x', {})` alcanzaría
+		// para dar el test por bueno sin haber leído ninguna clave nunca.
+		const completas = invocaciones.filter(
+			(i) =>
+				comandos.has(i.comando) &&
+				(comandos.get(i.comando)?.length ?? 0) > 0 &&
+				i.claves.length > 0
+		);
+		expect(completas.length).toBeGreaterThan(0);
 	});
 
 	test('toda llamada pasa todos los argumentos del comando', () => {
