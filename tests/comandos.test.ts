@@ -198,8 +198,31 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 	const salida: { archivo: string; comando: string; claves: string[] }[] = [];
 	for (const archivo of fuentes('src')) {
 		const texto = readFileSync(archivo, 'utf8');
-		for (const m of texto.matchAll(/invoke(?:<[^>]*>)?\(\s*'([^']+)'\s*(,)?/g)) {
-			const [, comando, hayArgs] = m;
+		// El genérico se salta contando `<` y `>`, no con `<[^>]*>`: ése corta
+		// en el primer `>` y no reconoce `invoke<Record<string, string>>(...)`.
+		// Esas llamadas quedaban afuera de **todas** las comprobaciones de
+		// abajo sin que nada lo dijera, que es el peor agujero que puede tener
+		// un test de cobertura.
+		for (const m of texto.matchAll(/\binvoke\s*(<|\()/g)) {
+			let i = m.index + m[0].length - 1;
+			if (texto[i] === '<') {
+				let nivel = 0;
+				for (; i < texto.length; i++) {
+					if (texto[i] === '<') nivel++;
+					else if (texto[i] === '>' && --nivel === 0) {
+						i++;
+						break;
+					}
+				}
+				while (i < texto.length && /\s/.test(texto[i])) i++;
+				if (texto[i] !== '(') continue;
+			}
+			// `i` está en el paréntesis de apertura.
+			const resto = texto.slice(i + 1);
+			const nombre = resto.match(/^\s*'([^']+)'\s*(,)?/);
+			if (!nombre) continue;
+			const [encabezado, comando, hayArgs] = nombre;
+			const m2 = { index: i + 1, 0: encabezado } as { index: number; 0: string };
 			// `plugin:nombre|comando` es de un plugin de Tauri: su firma vive
 			// en otro crate y acá no se puede comparar contra nada.
 			if (comando.includes('|')) continue;
@@ -214,7 +237,7 @@ function llamadas(): { archivo: string; comando: string; claves: string[] }[] {
 			// `invoke('x', args)` —donde los argumentos son una variable— se
 			// iba a buscar el objeto de la llamada siguiente y acusaba de
 			// faltantes las claves de otra.
-			let desde = m.index + m[0].length;
+			let desde = m2.index + m2[0].length;
 			while (desde < texto.length && /\s/.test(texto[desde])) desde++;
 			if (texto[desde] !== '{') {
 				// Los argumentos son una variable: no se puede saber qué
