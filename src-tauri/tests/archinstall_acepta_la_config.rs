@@ -14,8 +14,15 @@
 //! `device_handler.get_device`, y enumerarlos sí pide root—, así que se repiten
 //! sus mismas líneas sobre cada partición.
 //!
-//! Si archinstall no está instalado, la prueba se saltea: es la que corre en la
-//! ISO, no necesariamente en la máquina de quien desarrolla.
+//! Si archinstall no se puede importar, la prueba se saltea **diciendo por qué**:
+//! es la que corre en la ISO, no necesariamente en la máquina de quien
+//! desarrolla. Y se saltea igual si está instalado pero su cadena de imports está
+//! rota —pasó con `pydantic` y `pydantic-core` desparejos—, porque la pregunta
+//! que esta prueba hace no se puede contestar en una máquina así.
+//!
+//! El salteo dice el motivo a propósito: callado escondería que la configuración
+//! del particionado no se validó, que es justo lo que esto existe para no dejar
+//! pasar.
 
 use std::process::Command;
 
@@ -234,18 +241,49 @@ fn plan(fs: SistemaArchivos, cifrar: bool) -> PlanInstalacion {
     }
 }
 
-fn hay_archinstall() -> bool {
-    Command::new("python3")
-        .args(["-c", "import archinstall"])
+/// El módulo que la comprobación necesita, y que por lo tanto hay que probar.
+///
+/// **No alcanza con `import archinstall`.** Su `__init__` no trae este módulo,
+/// así que importar el paquete a secas puede funcionar mientras esto falla: pasó
+/// con un `python-pydantic-core` desparejo respecto de `python-pydantic` —dos
+/// repositorios sirviendo versiones distintas— y el resultado fue que el guard
+/// dejaba pasar y los cuatro tests reventaban con el traceback de Python en
+/// lugar de saltearse. El guard tiene que probar lo mismo que usa la prueba.
+const MODULO: &str = "archinstall.lib.models.device";
+
+/// Por qué no se puede correr la comprobación acá, o `None` si sí se puede.
+///
+/// Devuelve el motivo en lugar de un `bool` para poder decirlo al saltear: un
+/// salteo mudo esconde que la configuración no se validó, que es justamente lo
+/// que esta prueba existe para no dejar pasar.
+fn por_que_no_se_puede() -> Option<String> {
+    let salida = Command::new("python3")
+        .args(["-c", &format!("import {MODULO}")])
         .output()
-        .map(|s| s.status.success())
-        .unwrap_or(false)
+        .ok()?;
+
+    if salida.status.success() {
+        return None;
+    }
+
+    // La última línea del traceback, que es la que dice qué pasó. El resto son
+    // los diez marcos de la cadena de imports, que no agregan nada.
+    let error = String::from_utf8_lossy(&salida.stderr);
+    let motivo = error
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("python3 falló sin decir por qué")
+        .trim()
+        .to_string();
+
+    Some(motivo)
 }
 
 #[test]
 fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
-    if !hay_archinstall() {
-        eprintln!("archinstall no está instalado: se saltea");
+    if let Some(motivo) = por_que_no_se_puede() {
+        eprintln!("no se puede comprobar contra archinstall, se saltea: {motivo}");
         return;
     }
 
@@ -287,8 +325,8 @@ fn archinstall_acepta_todas_las_particiones_que_le_mandamos() {
 /// Windows, con el ESP ajeno ya en juego.
 #[test]
 fn archinstall_acepta_el_plan_que_no_borra_el_disco() {
-    if !hay_archinstall() {
-        eprintln!("archinstall no está instalado: se saltea");
+    if let Some(motivo) = por_que_no_se_puede() {
+        eprintln!("no se puede comprobar contra archinstall, se saltea: {motivo}");
         return;
     }
 
@@ -340,8 +378,8 @@ fn archinstall_acepta_el_plan_que_no_borra_el_disco() {
 /// la de al lado.
 #[test]
 fn archinstall_acepta_el_plan_que_formatea_una_particion() {
-    if !hay_archinstall() {
-        eprintln!("archinstall no está instalado: se saltea");
+    if let Some(motivo) = por_que_no_se_puede() {
+        eprintln!("no se puede comprobar contra archinstall, se saltea: {motivo}");
         return;
     }
 
@@ -419,8 +457,8 @@ fn archinstall_acepta_el_plan_que_formatea_una_particion() {
 /// rechace el archivo entero.
 #[test]
 fn archinstall_acepta_un_plan_manual() {
-    if !hay_archinstall() {
-        eprintln!("archinstall no está instalado: se saltea");
+    if let Some(motivo) = por_que_no_se_puede() {
+        eprintln!("no se puede comprobar contra archinstall, se saltea: {motivo}");
         return;
     }
 
@@ -504,6 +542,20 @@ fn archinstall_acepta_un_plan_manual() {
             );
         }
     }
+}
+
+/// Que el guard siga probando lo que la comprobación usa.
+///
+/// Es el error que dejó pasar cuatro tests reventados: el guard importaba
+/// `archinstall` y la comprobación importaba `archinstall.lib.models.device`, y
+/// entre los dos había toda una cadena de dependencias que podía estar rota.
+/// Si alguien cambia los imports de `COMPROBACION`, esto falla y se entera acá.
+#[test]
+fn el_guard_prueba_el_modulo_que_la_comprobacion_importa() {
+    assert!(
+        COMPROBACION.contains(MODULO),
+        "la comprobación ya no importa {MODULO}: el guard está probando otra cosa"
+    );
 }
 
 /// Corre la comprobación con el JSON por la entrada estándar.
