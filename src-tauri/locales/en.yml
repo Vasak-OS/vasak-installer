@@ -17,16 +17,6 @@ ventana:
   minimizar: Minimise
   maximizar: Maximise
   cerrar: Close
-  salir: Quit the installer
-  salirTitulo: Quit the installer?
-  salirTexto: >-
-    No disk has been touched yet, so nothing on the computer is lost. What you
-    have filled in so far will be discarded.
-  salirInstalandoTexto: >-
-    The disk has already been modified. If you quit now, neither the new system
-    nor what was there before will be left, and you have to start over.
-  salirConfirmar: Yes, quit
-  salirVolver: Back to the installer
 
 barraLateral:
   plegar: Collapse the sidebar

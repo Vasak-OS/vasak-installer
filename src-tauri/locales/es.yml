@@ -17,18 +17,6 @@ ventana:
   minimizar: Minimizar
   maximizar: Maximizar
   cerrar: Cerrar
-  # La ventana no lleva los tres botones: cerrarla mientras el ayudante escribe
-  # el disco deja el equipo a medio instalar. Ésta es la salida, y pregunta.
-  salir: Salir del instalador
-  salirTitulo: ¿Salir del instalador?
-  salirTexto: >-
-    Todavía no se tocó ningún disco, así que no se pierde nada del equipo. Lo que
-    completaste hasta acá sí se pierde.
-  salirInstalandoTexto: >-
-    El disco ya está modificado. Si salís ahora, no queda ni el sistema nuevo ni
-    lo que había antes, y hay que empezar de cero.
-  salirConfirmar: Sí, salir
-  salirVolver: Volver al instalador
 
 barraLateral:
   plegar: Plegar la barra lateral

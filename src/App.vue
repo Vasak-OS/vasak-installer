@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import type { ControlDeVentana } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
-import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
@@ -110,27 +109,24 @@ async function cancelar() {
 }
 
 /**
- * Salir del instalador, que es la única salida que tiene la ventana.
+ * Cuáles de los tres botones lleva la ventana.
  *
- * La ventana no lleva los tres botones: cerrarla mientras el ayudante escribe
- * el disco deja el equipo a medio instalar, y un botón de cerrar en la barra no
- * distingue en qué paso está. Así que la salida es ésta, pregunta antes, y dice
- * cosas distintas según haya o no un disco ya tocado.
+ * Los tres, salvo **cerrar mientras el ayudante está escribiendo el disco**:
+ * ahí cerrar deja el equipo a medio instalar, sin sistema nuevo y sin lo que
+ * había antes. Minimizar y maximizar se quedan siempre, que es lo que evita lo
+ * contrario —perder la ventana de vista y no poder traerla de vuelta—.
+ *
+ * Cuando la instalación termina, falla o se cancela, cerrar vuelve: ahí ya no
+ * hay nada escribiendo. Y mientras corre, la salida es el «cancelar» de la
+ * pantalla de instalación, que pregunta y detiene al ayudante antes.
  */
-const confirmandoSalida = ref(false);
+const instalando = computed(
+	() => store.navegacionBloqueada && !store.terminada && store.fallo === null
+);
 
-/**
- * Si ya se empezó a escribir. Es lo mismo que bloquea la navegación: a partir
- * del momento en que el ayudante arranca no hay vuelta atrás.
- */
-const yaSeToco = computed(() => store.navegacionBloqueada);
-
-async function salir() {
-	// Primero se le avisa al ayudante, y recién después se cierra: cerrar la
-	// ventana no detiene el proceso que está escribiendo el disco.
-	if (yaSeToco.value) await cancelar();
-	await getCurrentWindow().close();
-}
+const controlesDeLaVentana = computed<ControlDeVentana[]>(() =>
+	instalando.value ? ['minimize', 'maximize'] : ['minimize', 'maximize', 'close']
+);
 
 onMounted(async () => {
 	// El tema y los iconos del escritorio, como cualquier aplicación de VasakOS.
@@ -190,7 +186,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <WindowAppLayout>
+  <WindowAppLayout :controls="controlesDeLaVentana">
     <!--
       La barra de título propia: icono a la izquierda, nombre al medio. Sin esto
       quedaba con los tres botones de la ventana flotando sobre nada — y como la
@@ -202,21 +198,6 @@ onUnmounted(() => {
     </template>
     <template #titulo>
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
-    </template>
-
-    <!-- La salida de la ventana, que no tiene botón de cerrar. Va en la barra
-         para que esté en todos los pasos: el «cancelar» que ya existía vive
-         adentro de la pantalla de instalación y no alcanza a los anteriores. -->
-    <template #acciones>
-      <button
-        type="button"
-        class="rounded-corner border border-ui-border bg-ui-bg/80 px-2 py-1 text-sm transition-colors hover:bg-status-error/10"
-        :title="t('ventana.salir')"
-        :aria-label="t('ventana.salir')"
-        @click="confirmandoSalida = true"
-      >
-        {{ t('comun.cancelar') }}
-      </button>
     </template>
 
     <!-- `p-1` y `gap-1`: la barra lateral es una tarjeta con borde y esquina
@@ -242,40 +223,6 @@ onUnmounted(() => {
           estaba.
         -->
         <main ref="contenido" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto p-6 outline-none">
-          <!--
-            Salir pregunta y dice qué queda. Antes de tocar el disco no se
-            pierde nada del equipo; después, el disco no tiene ni el sistema
-            nuevo ni lo que había antes, y eso hay que decirlo con esas
-            palabras: un cartel que sólo diga «¿salir?» hace creer que se
-            vuelve al estado anterior.
-          -->
-          <AlertMessage
-            v-if="confirmandoSalida"
-            tipo="error"
-            :titulo="t('ventana.salirTitulo')"
-            class="mb-4"
-          >
-            <p>{{ yaSeToco ? t('ventana.salirInstalandoTexto') : t('ventana.salirTexto') }}</p>
-            <div class="mt-3 flex gap-2">
-              <button
-                type="button"
-                data-prueba="salir"
-                class="rounded-corner border border-status-error px-3 py-1.5 text-sm transition-colors hover:bg-status-error/10"
-                @click="salir()"
-              >
-                {{ t('ventana.salirConfirmar') }}
-              </button>
-              <button
-                type="button"
-                data-prueba="volver"
-                class="rounded-corner border border-ui-border-strong px-3 py-1.5 text-sm transition-colors hover:bg-ui-surface"
-                @click="confirmandoSalida = false"
-              >
-                {{ t('ventana.salirVolver') }}
-              </button>
-            </div>
-          </AlertMessage>
-
           <component :is="vistas[store.paso]" @cancelar="cancelar" />
 
           <p v-if="errorAlArrancar" role="alert" class="mt-4 text-status-error text-sm">

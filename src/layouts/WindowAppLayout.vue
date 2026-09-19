@@ -2,29 +2,35 @@
 /**
  * La ventana del instalador.
  *
- * No dibuja nada propio: el borde, la esquina, el fondo y la barra salen de
- * `WindowFrame`, que es el mismo de todas las ventanas del escritorio. Estaba
- * copiado acá, y ya había derivado de las copias vecinas.
+ * No dibuja nada propio: el borde, la esquina, el fondo, la barra y los botones
+ * salen de `WindowFrame`, que es el mismo de todas las ventanas del escritorio.
  *
- * # Sin los tres botones
+ * # Los botones
  *
- * `:controls="[]"`. Minimizar o cerrar el instalador mientras está
- * particionando un disco deja el equipo a medio instalar, y el botón de la
- * barra no distingue en qué paso está.
- *
- * La salida va por `acciones`, que es donde la aplicación pone lo suyo: un
- * «salir» que pregunta antes, y que durante la instalación dice qué queda en el
- * disco. Sin él esto sería una ventana sin ninguna salida, que es peor que el
- * problema que se estaba evitando.
+ * Quién los decide es `App.vue`, que es quien sabe en qué paso está: los tres,
+ * salvo **cerrar mientras el ayudante está escribiendo el disco**. Minimizar y
+ * maximizar se quedan siempre —perder la ventana de vista y no poder traerla de
+ * vuelta sería el problema contrario—, y mientras la instalación corre la
+ * salida es el «cancelar» de esa pantalla, que pregunta y detiene al ayudante
+ * antes.
  */
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { WindowFrame } from '@vasakgroup/vue-libvasak';
+import { type ControlDeVentana, LOS_TRES_CONTROLES, WindowFrame } from '@vasakgroup/vue-libvasak';
+
+withDefaults(defineProps<{ controls?: ControlDeVentana[] }>(), {
+	controls: () => LOS_TRES_CONTROLES,
+});
 
 const { t } = useI18n();
 </script>
 
 <template>
-  <WindowFrame :controls="[]" :title="t('app.nombre')">
+  <WindowFrame
+    :controls="controls"
+    :title="t('app.nombre')"
+    :minimize-label="t('ventana.minimizar')"
+    :maximize-label="t('ventana.maximizar')"
+    :close-label="t('ventana.cerrar')">
     <template v-if="$slots.identidad" #identidad><slot name="identidad" /></template>
     <template v-if="$slots.titulo" #titulo><slot name="titulo" /></template>
     <template v-if="$slots.acciones" #acciones><slot name="acciones" /></template>
