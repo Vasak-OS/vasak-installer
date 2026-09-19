@@ -1,32 +1,36 @@
 <script lang="ts" setup>
-import TopBarComponent from '@/components/topbar/TopBarComponent.vue';
+/**
+ * La ventana del instalador.
+ *
+ * No dibuja nada propio: el borde, la esquina, el fondo y la barra salen de
+ * `WindowFrame`, que es el mismo de todas las ventanas del escritorio. Estaba
+ * copiado acá, y ya había derivado de las copias vecinas.
+ *
+ * # Sin los tres botones
+ *
+ * `:controls="[]"`. Minimizar o cerrar el instalador mientras está
+ * particionando un disco deja el equipo a medio instalar, y el botón de la
+ * barra no distingue en qué paso está.
+ *
+ * La salida va por `acciones`, que es donde la aplicación pone lo suyo: un
+ * «salir» que pregunta antes, y que durante la instalación dice qué queda en el
+ * disco. Sin él esto sería una ventana sin ninguna salida, que es peor que el
+ * problema que se estaba evitando.
+ */
+import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { WindowFrame } from '@vasakgroup/vue-libvasak';
+
+const { t } = useI18n();
 </script>
+
 <template>
-  <div
-    class="flex h-screen w-screen flex-col overflow-hidden rounded-corner-window border border-ui-border bg-ui-bg/80">
-    <!-- El `slot` de la barra superior se reexpone acá. `TopBarComponent` ya
-         tenía uno para la izquierda de la barra, pero el layout no lo pasaba,
-         así que desde una aplicación no había forma de llegar a él: la barra
-         quedaba con los tres botones de la ventana flotando sobre nada. Y como
-         la ventana no lleva decoración del compositor, el nombre de la
-         aplicación no aparecía en ningún otro lado. -->
-    <TopBarComponent>
-      <template #identidad><slot name="identidad" /></template>
-      <template #titulo><slot name="titulo" /></template>
-    </TopBarComponent>
-    <!-- El `slot` es lo que hace usable este layout.
-         Sin él, `<WindowAppLayout>…</WindowAppLayout>` descartaba en silencio todo
-         lo que se le pusiera dentro y la ventana abría vacía con el relleno de la
-         plantilla todavía puesto. En vasak-monitor costó una compilación y una
-         captura darse cuenta, porque no hay ningún error: simplemente no aparece
-         nada. -->
-    <div class="flex min-h-0 flex-1">
-      <slot>
-        <p class="p-4 text-tx-muted text-sm">
-          Poné el contenido de la aplicación dentro de
-          <code>&lt;WindowAppLayout&gt;</code>.
-        </p>
-      </slot>
+  <WindowFrame :controls="[]" :title="t('app.nombre')">
+    <template v-if="$slots.identidad" #identidad><slot name="identidad" /></template>
+    <template v-if="$slots.titulo" #titulo><slot name="titulo" /></template>
+    <template v-if="$slots.acciones" #acciones><slot name="acciones" /></template>
+
+    <div class="flex min-h-0 min-w-0 flex-1">
+      <slot />
     </div>
-  </div>
+  </WindowFrame>
 </template>

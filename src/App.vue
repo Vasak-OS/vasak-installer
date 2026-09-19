@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
+import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
@@ -107,6 +109,29 @@ async function cancelar() {
 	}
 }
 
+/**
+ * Salir del instalador, que es la única salida que tiene la ventana.
+ *
+ * La ventana no lleva los tres botones: cerrarla mientras el ayudante escribe
+ * el disco deja el equipo a medio instalar, y un botón de cerrar en la barra no
+ * distingue en qué paso está. Así que la salida es ésta, pregunta antes, y dice
+ * cosas distintas según haya o no un disco ya tocado.
+ */
+const confirmandoSalida = ref(false);
+
+/**
+ * Si ya se empezó a escribir. Es lo mismo que bloquea la navegación: a partir
+ * del momento en que el ayudante arranca no hay vuelta atrás.
+ */
+const yaSeToco = computed(() => store.navegacionBloqueada);
+
+async function salir() {
+	// Primero se le avisa al ayudante, y recién después se cierra: cerrar la
+	// ventana no detiene el proceso que está escribiendo el disco.
+	if (yaSeToco.value) await cancelar();
+	await getCurrentWindow().close();
+}
+
 onMounted(async () => {
 	// El tema y los iconos del escritorio, como cualquier aplicación de VasakOS.
 	// Importa más acá que en otras: esta es la primera pantalla que alguien ve
@@ -179,6 +204,21 @@ onUnmounted(() => {
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
     </template>
 
+    <!-- La salida de la ventana, que no tiene botón de cerrar. Va en la barra
+         para que esté en todos los pasos: el «cancelar» que ya existía vive
+         adentro de la pantalla de instalación y no alcanza a los anteriores. -->
+    <template #acciones>
+      <button
+        type="button"
+        class="rounded-corner border border-ui-border bg-ui-bg/80 px-2 py-1 text-sm transition-colors hover:bg-status-error/10"
+        :title="t('ventana.salir')"
+        :aria-label="t('ventana.salir')"
+        @click="confirmandoSalida = true"
+      >
+        {{ t('comun.cancelar') }}
+      </button>
+    </template>
+
     <!-- `p-1` y `gap-1`: la barra lateral es una tarjeta con borde y esquina
          redondeada, y pegada al borde de la ventana se le come el redondeo. Es
          la misma distancia que separa todo en el resto de las ventanas. -->
@@ -202,6 +242,40 @@ onUnmounted(() => {
           estaba.
         -->
         <main ref="contenido" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto p-6 outline-none">
+          <!--
+            Salir pregunta y dice qué queda. Antes de tocar el disco no se
+            pierde nada del equipo; después, el disco no tiene ni el sistema
+            nuevo ni lo que había antes, y eso hay que decirlo con esas
+            palabras: un cartel que sólo diga «¿salir?» hace creer que se
+            vuelve al estado anterior.
+          -->
+          <AlertMessage
+            v-if="confirmandoSalida"
+            tipo="error"
+            :titulo="t('ventana.salirTitulo')"
+            class="mb-4"
+          >
+            <p>{{ yaSeToco ? t('ventana.salirInstalandoTexto') : t('ventana.salirTexto') }}</p>
+            <div class="mt-3 flex gap-2">
+              <button
+                type="button"
+                data-prueba="salir"
+                class="rounded-corner border border-status-error px-3 py-1.5 text-sm transition-colors hover:bg-status-error/10"
+                @click="salir()"
+              >
+                {{ t('ventana.salirConfirmar') }}
+              </button>
+              <button
+                type="button"
+                data-prueba="volver"
+                class="rounded-corner border border-ui-border-strong px-3 py-1.5 text-sm transition-colors hover:bg-ui-surface"
+                @click="confirmandoSalida = false"
+              >
+                {{ t('ventana.salirVolver') }}
+              </button>
+            </div>
+          </AlertMessage>
+
           <component :is="vistas[store.paso]" @cancelar="cancelar" />
 
           <p v-if="errorAlArrancar" role="alert" class="mt-4 text-status-error text-sm">
