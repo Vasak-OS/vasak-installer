@@ -18,6 +18,10 @@ ventana:
   maximizar: Maximizar
   cerrar: Cerrar
 
+barraLateral:
+  plegar: Plegar la barra lateral
+  desplegar: Desplegar la barra lateral
+
 comun:
   siguiente: Continuar
   atras: Atrás

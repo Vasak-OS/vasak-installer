@@ -179,14 +179,22 @@ onUnmounted(() => {
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
     </template>
 
-    <div class="flex min-h-0 w-full flex-1">
+    <!-- `p-1` y `gap-1`: la barra lateral es una tarjeta con borde y esquina
+         redondeada, y pegada al borde de la ventana se le come el redondeo. Es
+         la misma distancia que separa todo en el resto de las ventanas. -->
+    <div class="flex min-h-0 w-full flex-1 gap-1 p-1">
       <PasosSidebar
         :actual="store.paso"
         :navegable="!store.navegacionBloqueada"
         @ir="irA"
       />
 
-      <div class="flex min-w-0 flex-1 flex-col">
+      <!-- El contenido también es un panel apoyado sobre la ventana, así que
+           va en superficie: `--ui-background` es el token de **la ventana**, y
+           con el fondo de ventana puesto acá el escritorio se ve a través del
+           paso que se está completando. -->
+      <div
+        class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-corner border border-ui-border bg-ui-surface/70">
         <!--
           `tabindex="-1"` para poder mover el foco acá al cambiar de paso sin
           meter el contenedor en el orden de tabulación. Es lo que hace que un

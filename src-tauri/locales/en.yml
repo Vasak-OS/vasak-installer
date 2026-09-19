@@ -18,6 +18,10 @@ ventana:
   maximizar: Maximise
   cerrar: Close
 
+barraLateral:
+  plegar: Collapse the sidebar
+  desplegar: Expand the sidebar
+
 comun:
   siguiente: Continue
   atras: Back

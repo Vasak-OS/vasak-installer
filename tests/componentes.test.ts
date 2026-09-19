@@ -77,6 +77,17 @@ function componentesImportados(contenido: string): Set<string> {
 	for (const [, nombre] of script.matchAll(/^\s*import\s+([A-Z][A-Za-z0-9]*)\s+from/gm)) {
 		nombres.add(nombre);
 	}
+	// Y los que vienen entre llaves. Los de la librería compartida se importan
+	// así —`import { SideBar } from '@vasakgroup/vue-libvasak'`— y sin esto la
+	// prueba los daba por no importados: un falso positivo que obliga a elegir
+	// entre desactivarla o no usar la librería.
+	for (const [, listado] of script.matchAll(/^\s*import\s+(?:type\s+)?\{([^}]*)\}\s+from/gm)) {
+		for (const parte of listado.split(',')) {
+			// `A as B` importa `B`, que es el nombre con el que se usa.
+			const nombre = parte.trim().split(/\s+as\s+/).pop()?.trim() ?? '';
+			if (/^[A-Z][A-Za-z0-9]*$/.test(nombre)) nombres.add(nombre);
+		}
+	}
 	// Los que llegan por `defineAsyncComponent` o por un objeto de vistas, como
 	// el mapa de `App.vue`, se usan con `<component :is>` y ya están exentos.
 	return nombres;
