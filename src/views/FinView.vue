@@ -31,11 +31,11 @@ async function accion(comando: 'reiniciar' | 'apagar') {
     <PageHeader :icono="ICONO_PASO.fin" :titulo="t('fin.titulo')" :descripcion="t('fin.intro')" />
 
     <div class="space-y-4">
-      <AlertMessage tipo="exito">
+      <AlertMessage tone="success">
         {{ interpolar(t('fin.primerInicio'), store.eleccion.usuario) }}
       </AlertMessage>
 
-      <AlertMessage v-if="store.eleccion.cifrar" tipo="info">
+      <AlertMessage v-if="store.eleccion.cifrar" tone="info">
         {{ t('fin.cifradoRecordatorio') }}
       </AlertMessage>
 
@@ -59,7 +59,7 @@ async function accion(comando: 'reiniciar' | 'apagar') {
         <p class="mt-3 text-tx-muted text-xs">{{ t('fin.seguirEnVivoAyuda') }}</p>
       </SectionCard>
 
-      <AlertMessage v-if="error" tipo="error">{{ error }}</AlertMessage>
+      <AlertMessage v-if="error" tone="error">{{ error }}</AlertMessage>
     </div>
   </div>
 </template>

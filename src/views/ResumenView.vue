@@ -78,8 +78,8 @@ async function autorizar() {
       -->
       <AlertMessage
         v-if="sePierdeAlgo"
-        tipo="error"
-        :titulo="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
+        tone="error"
+        :title="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
       >
         <p>{{ t('resumen.aviso') }}</p>
         <p class="mt-2 font-medium">{{ t('disco.seVaAPerder') }}</p>
@@ -92,8 +92,8 @@ async function autorizar() {
            la tabla se rehace igual y eso sigue siendo el punto sin retorno. -->
       <AlertMessage
         v-else-if="store.eleccion.esquema === 'borrar_todo'"
-        tipo="error"
-        :titulo="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
+        tone="error"
+        :title="interpolar(t('resumen.avisoTitulo'), store.eleccion.disco)"
       >
         <p>{{ t('resumen.aviso') }}</p>
         <p class="mt-2">{{ t('disco.seVaAPerderVacio') }}</p>
@@ -101,8 +101,8 @@ async function autorizar() {
 
       <AlertMessage
         v-else
-        tipo="info"
-        :titulo="interpolar(t('resumen.avisoJuntoTitulo'), store.eleccion.disco)"
+        tone="info"
+        :title="interpolar(t('resumen.avisoJuntoTitulo'), store.eleccion.disco)"
       >
         {{ t('resumen.avisoJunto') }}
       </AlertMessage>
@@ -176,8 +176,8 @@ async function autorizar() {
 
       <AlertMessage
         v-if="!store.ayudanteListo"
-        tipo="aviso"
-        :titulo="t('resumen.autorizacionTitulo')"
+        tone="warning"
+        :title="t('resumen.autorizacionTitulo')"
       >
         <p>{{ t('resumen.autorizacion') }}</p>
         <p v-if="store.errorAyudante" class="mt-2 font-mono">{{ store.errorAyudante }}</p>

@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { SwitchRow, TextInput } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
-import SwitchToggle from '@/components/ui/SwitchToggle.vue';
-import TextInput from '@/components/ui/TextInput.vue';
 import {
 	type Disco,
 	type EsquemaDisco,
@@ -177,7 +176,7 @@ onMounted(async () => {
 
     <div class="space-y-4">
       <div v-if="store.discos.length === 0">
-        <AlertMessage tipo="error" :titulo="t('disco.sinDiscos')">
+        <AlertMessage tone="error" :title="t('disco.sinDiscos')">
           {{ t('disco.sinDiscosDetalle') }}
         </AlertMessage>
       </div>
@@ -374,8 +373,8 @@ onMounted(async () => {
         -->
         <AlertMessage
           v-if="store.errorVistaPrevia"
-          tipo="aviso"
-          :titulo="t('disco.esquemaNoSePuede')"
+          tone="warning"
+          :title="t('disco.esquemaNoSePuede')"
           class="mt-3"
         >
           {{ store.errorVistaPrevia }}
@@ -399,19 +398,19 @@ onMounted(async () => {
       </SectionCard>
 
       <SectionCard>
-        <SwitchToggle
+        <SwitchRow
           v-model="store.eleccion.zram"
           :label="t('disco.zram')"
-          :descripcion="t('disco.zramAyuda')"
+          :description="t('disco.zramAyuda')"
         />
-        <SwitchToggle
+        <SwitchRow
           v-model="store.eleccion.cifrar"
           :label="t('disco.cifrar')"
-          :descripcion="t('disco.cifrarAyuda')"
+          :description="t('disco.cifrarAyuda')"
         />
 
         <div v-if="store.eleccion.cifrar" class="mt-3 space-y-3">
-          <AlertMessage tipo="aviso" :titulo="t('disco.cifrarAvisoTitulo')">
+          <AlertMessage tone="warning" :title="t('disco.cifrarAvisoTitulo')">
             {{ t('disco.cifrarAviso') }}
           </AlertMessage>
 

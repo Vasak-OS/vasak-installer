@@ -12,9 +12,10 @@
  * todos los de acá existan.
  */
 
+/** Los pasos del asistente. */
+import type { TonoDelAviso } from '@vasakgroup/vue-libvasak';
 import type { Paso } from '@/stores/instalacion';
 
-/** Los pasos del asistente. */
 export const ICONO_PASO: Record<Paso, string> = {
 	bienvenida: 'help-about',
 	red: 'network-wireless',
@@ -110,13 +111,19 @@ export const ICONO_ROL_PARTICION: Record<string, string> = {
 	datos: 'folder',
 };
 
-/** Los mensajes. */
-export const ICONO_MENSAJE = {
+/**
+ * Los mensajes, por tono.
+ *
+ * Las claves son las de `TonoDelAviso` de la librería y no unas propias: el
+ * aviso de acá es el de la librería con su icono puesto, y dos vocabularios
+ * para lo mismo obligan a traducir en el medio.
+ */
+export const ICONO_MENSAJE: Record<TonoDelAviso, string> = {
 	info: 'dialog-information',
-	aviso: 'dialog-warning',
+	warning: 'dialog-warning',
 	error: 'dialog-error',
-	exito: 'object-select',
-} as const;
+	success: 'object-select',
+};
 
 /**
  * Las filas del resumen del equipo, en la bienvenida.

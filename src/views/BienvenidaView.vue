@@ -69,19 +69,19 @@ const pocaMemoria = computed(
     <div class="mt-4 space-y-3">
       <AlertMessage
         v-if="store.sistema?.virtualizacion"
-        tipo="info"
+        tone="info"
       >
         {{ t('bienvenida.avisoVirtual') }}
       </AlertMessage>
 
-      <AlertMessage v-if="pocaMemoria" tipo="aviso" :titulo="t('bienvenida.avisoMemoriaTitulo')">
+      <AlertMessage v-if="pocaMemoria" tone="warning" :title="t('bienvenida.avisoMemoriaTitulo')">
         {{ interpolar(t('bienvenida.avisoMemoria'), memoria) }}
       </AlertMessage>
 
       <AlertMessage
         v-if="store.sistema?.firmware === 'bios'"
-        tipo="aviso"
-        :titulo="t('bienvenida.avisoBiosTitulo')"
+        tone="warning"
+        :title="t('bienvenida.avisoBiosTitulo')"
       >
         {{ t('bienvenida.avisoBios') }}
       </AlertMessage>

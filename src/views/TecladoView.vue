@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { SearchSelect, TextInput } from '@vasakgroup/vue-libvasak';
 import { computed, ref } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
-import SelectorBuscable from '@/components/ui/SelectorBuscable.vue';
-import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_PASO } from '@/tools/iconos';
 
@@ -32,13 +31,19 @@ const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
 
     <div class="space-y-4">
       <SectionCard :titulo="t('teclado.distribucion')">
-        <TextInput v-if="sinTeclados" v-model="store.eleccion.teclado" mono placeholder="la-latin1" />
-        <SelectorBuscable
+        <TextInput
+          v-if="sinTeclados"
+          v-model="store.eleccion.teclado"
+          :ariaLabel="t('teclado.distribucion')"
+          mono
+          placeholder="la-latin1" />
+        <SearchSelect
           v-else
           v-model="store.eleccion.teclado"
-          :opciones="opciones"
-          :placeholder-busqueda="t('comun.buscar')"
-          :texto-sin-resultados="t('comun.sinResultados')"
+          :label="t('teclado.distribucion')"
+          :options="opciones"
+          :search-placeholder="t('comun.buscar')"
+          :empty-text="t('comun.sinResultados')"
         />
       </SectionCard>
 
@@ -52,7 +57,7 @@ const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
         está dibujando esta ventana. Sin decirlo, alguien tipea, ve que sale
         `us`, y cree que el instalador ignoró su elección.
       -->
-      <AlertMessage tipo="info">{{ t('teclado.avisoNoAplica') }}</AlertMessage>
+      <AlertMessage tone="info">{{ t('teclado.avisoNoAplica') }}</AlertMessage>
     </div>
   </div>
 </template>
