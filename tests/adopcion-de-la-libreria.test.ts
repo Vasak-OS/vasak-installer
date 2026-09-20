@@ -16,7 +16,7 @@
  * la librería, y se prueba allá.
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -70,6 +70,21 @@ describe('el aviso', () => {
 });
 
 describe('la barra de progreso, que cambió de unidad', () => {
+	/**
+	 * Las vistas montadas, para desmontarlas pase lo que pase.
+	 *
+	 * `InstalacionView` arranca un `setInterval` al montarse —el reloj de
+	 * «transcurrido»— y lo limpia al desmontarse. Sin esto, cada prueba deja un
+	 * temporizador vivo corriendo contra una vista que ya nadie mira, y una
+	 * aserción que falle se saltea el desmontaje del final.
+	 */
+	const vistas = new Set<{ unmount: () => void }>();
+
+	afterEach(() => {
+		for (const vista of vistas) vista.unmount();
+		vistas.clear();
+	});
+
 	function conPasos(hechos: number, total: number, parcial: number | null = null) {
 		const store = useInstalacionStore();
 		store.pasosInstalacion = Array.from({ length: total }, (_, i) => `paso${i}`);
@@ -79,7 +94,9 @@ describe('la barra de progreso, que cambió de unidad', () => {
 			mapa.set(`paso${i}`, { paso: `paso${i}`, estado, fraccion: estado === 'en_curso' ? parcial : null, detalle: null });
 		}
 		store.progreso = mapa;
-		return mount(InstalacionView);
+		const vista = mount(InstalacionView);
+		vistas.add(vista);
+		return vista;
 	}
 
 	const laBarra = (vista: ReturnType<typeof conPasos>) =>
