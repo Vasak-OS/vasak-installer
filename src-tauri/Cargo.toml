@@ -1,6 +1,6 @@
 [package]
 name = "vasak-installer"
-version = "0.9.6"
+version = "0.10.0"
 description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"

@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { SwitchRow, TextInput } from '@vasakgroup/vue-libvasak';
 import { computed, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
-import SwitchToggle from '@/components/ui/SwitchToggle.vue';
-import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_PASO } from '@/tools/iconos';
 import { interpolar } from '@/tools/interpolar';
@@ -296,15 +295,15 @@ const anchoFuerza = computed(() => {
       </SectionCard>
 
       <SectionCard>
-        <SwitchToggle
+        <SwitchRow
           v-model="store.eleccion.administrador"
           :label="t('cuenta.administrador')"
-          :descripcion="t('cuenta.administradorAyuda')"
+          :description="t('cuenta.administradorAyuda')"
         />
-        <SwitchToggle
+        <SwitchRow
           v-model="store.eleccion.rootHabilitado"
           :label="t('cuenta.rootHabilitado')"
-          :descripcion="t('cuenta.rootAyuda')"
+          :description="t('cuenta.rootAyuda')"
         />
 
         <div v-if="store.eleccion.rootHabilitado" class="mt-3 space-y-3">
@@ -344,8 +343,8 @@ const anchoFuerza = computed(() => {
       -->
       <AlertMessage
         v-if="nadiePuedeAdministrar"
-        tipo="aviso"
-        :titulo="t('cuenta.sinAdminNiRootTitulo')"
+        tone="warning"
+        :title="t('cuenta.sinAdminNiRootTitulo')"
       >
         {{ t('cuenta.sinAdminNiRoot') }}
       </AlertMessage>

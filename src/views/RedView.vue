@@ -63,10 +63,10 @@ onUnmounted(() => {
     <PageHeader :icono="ICONO_PASO.red" :titulo="t('red.titulo')" :descripcion="t('red.intro')" />
 
     <SectionCard>
-      <AlertMessage v-if="hayRed" tipo="exito" :titulo="t('red.conectado')">
+      <AlertMessage v-if="hayRed" tone="success" :title="t('red.conectado')">
         {{ t('red.conectadoDetalle') }}
       </AlertMessage>
-      <AlertMessage v-else tipo="aviso" :titulo="t('red.desconectado')">
+      <AlertMessage v-else tone="warning" :title="t('red.desconectado')">
         {{ t('red.desconectadoDetalle') }}
       </AlertMessage>
 

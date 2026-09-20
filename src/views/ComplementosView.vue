@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { SwitchRow } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
-import SwitchToggle from '@/components/ui/SwitchToggle.vue';
 import { type Complemento, useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_PASO } from '@/tools/iconos';
 
@@ -64,7 +64,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
         Todo esto es opcional por definición, y una instalación sin complementos
         es un sistema que arranca y en el que se puede sumar todo después.
       -->
-      <AlertMessage v-if="store.complementos.error" tipo="aviso" :titulo="t('complementos.sinCatalogoTitulo')">
+      <AlertMessage v-if="store.complementos.error" tone="warning" :title="t('complementos.sinCatalogoTitulo')">
         <p>{{ t('complementos.sinCatalogo') }}</p>
         <p class="mt-1 font-mono">{{ store.complementos.error }}</p>
       </AlertMessage>
@@ -118,11 +118,11 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
 
         <div v-else class="space-y-1">
           <div v-for="complemento in deCategoria(categoria)" :key="complemento.id">
-            <SwitchToggle
+            <SwitchRow
               :model-value="estaElegido(complemento.id)"
               :label="t(`complementos.items.${complemento.id}.nombre`)"
-              :descripcion="t(`complementos.items.${complemento.id}.descripcion`)"
-              :icono="complemento.icono"
+              :description="t(`complementos.items.${complemento.id}.descripcion`)"
+              :icon="complemento.icono"
               @update:model-value="store.alternarComplemento(complemento.id)"
             >
               <template v-if="loPropusoElHardware(complemento)" #pie>
@@ -131,7 +131,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
                   {{ t('complementos.propuestoPorHardware') }}
                 </span>
               </template>
-            </SwitchToggle>
+            </SwitchRow>
           </div>
         </div>
       </SectionCard>

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { SearchSelect, SwitchRow, TextInput } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
-import SelectorBuscable from '@/components/ui/SelectorBuscable.vue';
-import SwitchToggle from '@/components/ui/SwitchToggle.vue';
-import TextInput from '@/components/ui/TextInput.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { nombreDeIdioma, nombreDeZona } from '@/tools/formato';
 import { ICONO_PASO } from '@/tools/iconos';
@@ -45,15 +43,17 @@ const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
         <TextInput
           v-if="sinZonas"
           v-model="store.eleccion.zonaHoraria"
+          :ariaLabel="t('region.zonaHoraria')"
           mono
           :placeholder="'America/Argentina/Buenos_Aires'"
         />
-        <SelectorBuscable
+        <SearchSelect
           v-else
           v-model="store.eleccion.zonaHoraria"
-          :opciones="opcionesZona"
-          :placeholder-busqueda="t('comun.buscar')"
-          :texto-sin-resultados="t('comun.sinResultados')"
+          :label="t('region.zonaHoraria')"
+          :options="opcionesZona"
+          :search-placeholder="t('comun.buscar')"
+          :empty-text="t('comun.sinResultados')"
         />
         <p v-if="sinZonas" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
       </SectionCard>
@@ -62,28 +62,30 @@ const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
         <TextInput
           v-if="sinIdiomas"
           v-model="store.eleccion.idiomaSistema"
+          :ariaLabel="t('region.idiomaSistema')"
           mono
           :placeholder="'es_AR'"
         />
-        <SelectorBuscable
+        <SearchSelect
           v-else
           v-model="store.eleccion.idiomaSistema"
-          :opciones="opcionesIdioma"
-          :placeholder-busqueda="t('comun.buscar')"
-          :texto-sin-resultados="t('comun.sinResultados')"
+          :label="t('region.idiomaSistema')"
+          :options="opcionesIdioma"
+          :search-placeholder="t('comun.buscar')"
+          :empty-text="t('comun.sinResultados')"
         />
         <p v-if="sinIdiomas" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
       </SectionCard>
 
       <SectionCard>
-        <SwitchToggle
+        <SwitchRow
           v-model="store.eleccion.ntp"
           :label="t('region.ntp')"
-          :descripcion="t('region.ntpAyuda')"
+          :description="t('region.ntpAyuda')"
         />
       </SectionCard>
 
-      <AlertMessage v-if="sinZonas || sinIdiomas" tipo="aviso">
+      <AlertMessage v-if="sinZonas || sinIdiomas" tone="warning">
         {{ t('region.sinCatalogo') }}
       </AlertMessage>
     </div>

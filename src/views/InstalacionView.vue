@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { ProgressBar } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
 import IconoSistema from '@/components/ui/IconoSistema.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
-import ProgressBar from '@/components/ui/ProgressBar.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_FALLADO, ICONO_HECHO, ICONO_PASO, ICONO_PASO_INSTALACION } from '@/tools/iconos';
@@ -56,7 +56,11 @@ onUnmounted(() => {
 const emit = defineEmits<{ cancelar: [] }>();
 
 /**
- * El avance general.
+ * El avance general, de 0 a 100.
+ *
+ * En por ciento y no en fracción porque es lo que esperan sus dos lectores: la
+ * barra de la librería y el número de al lado. Tenerlo en fracción obligaba a
+ * multiplicar por cien en los dos lugares.
  *
  * Se cuentan los pasos terminados y se suma la fracción del que está en curso.
  * No pondera: `pacstrap` tarda diez veces más que escribir el fstab, así que la
@@ -75,7 +79,7 @@ const avance = computed(() => {
 		if (p?.estado === 'hecho') hechos++;
 		else if (p?.estado === 'en_curso' && p.fraccion !== null) parcial = p.fraccion;
 	}
-	return (hechos + parcial) / total;
+	return ((hechos + parcial) / total) * 100;
 });
 
 const pasoActual = computed(() => {
@@ -132,7 +136,7 @@ watch(
     <PageHeader :icono="ICONO_PASO.instalacion" :titulo="t('instalacion.titulo')" :descripcion="t('instalacion.intro')" />
 
     <div class="space-y-4">
-      <AlertMessage v-if="store.fallo" tipo="error" :titulo="t('instalacion.falloTitulo')">
+      <AlertMessage v-if="store.fallo" tone="error" :title="t('instalacion.falloTitulo')">
         <p>{{ t('instalacion.falloTexto') }}</p>
         <p class="mt-2 font-medium">{{ t('instalacion.falloDetalleTitulo') }}</p>
         <p class="mt-1 font-mono break-words">{{ store.fallo }}</p>
@@ -141,7 +145,7 @@ watch(
 
       <template v-else>
         <SectionCard>
-          <ProgressBar :valor="avance" :label="t('instalacion.titulo')" />
+          <ProgressBar :value="avance" :label="t('instalacion.titulo')" />
           <div class="mt-3 flex items-baseline justify-between gap-3">
             <p class="font-medium text-sm">
               {{ pasoActual ? t(`instalacion.pasos.${pasoActual.paso}`) : t('comun.cargando') }}
@@ -151,7 +155,7 @@ watch(
                    cambia de ancho al pasar de 9 a 10 y el porcentaje de al lado se
                    corre, que es movimiento que no informa nada. -->
               <span v-if="transcurrido" class="tabular-nums">{{ transcurrido }}</span>
-              <span v-if="avance !== null">{{ Math.round(avance * 100) }}%</span>
+              <span v-if="avance !== null">{{ Math.round(avance) }}%</span>
             </div>
           </div>
 
@@ -159,14 +163,14 @@ watch(
                Va **además** de la general y no en su lugar: la general dice
                cuántos pasos van, que es información real que no hay que tapar. -->
           <div v-if="pasoSinFraccion" class="mt-2">
-            <ProgressBar :valor="null" :label="t('instalacion.trabajando')" />
+            <ProgressBar :value="null" :label="t('instalacion.trabajando')" />
           </div>
           <p v-if="pasoActual?.detalle" class="mt-1 truncate font-mono text-tx-muted text-xs">
             {{ pasoActual.detalle }}
           </p>
         </SectionCard>
 
-        <AlertMessage tipo="aviso">{{ t('instalacion.noApagues') }}</AlertMessage>
+        <AlertMessage tone="warning">{{ t('instalacion.noApagues') }}</AlertMessage>
       </template>
 
       <SectionCard>
@@ -267,7 +271,7 @@ watch(
           modificado, así que «cancelar» no devuelve nada al estado anterior. Un
           botón que sólo dice «Cancelar» hace creer que sí.
         -->
-        <AlertMessage v-else tipo="error" :titulo="t('instalacion.cancelarTitulo')">
+        <AlertMessage v-else tone="error" :title="t('instalacion.cancelarTitulo')">
           <p>{{ t('instalacion.cancelarTexto') }}</p>
           <div class="mt-3 flex gap-2">
             <button
