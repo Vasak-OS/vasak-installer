@@ -4257,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "vasak-installer"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "gtk",
  "libc",
