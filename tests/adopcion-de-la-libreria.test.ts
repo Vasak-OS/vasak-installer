@@ -17,6 +17,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { Glob } from 'bun';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -126,5 +129,55 @@ describe('la barra de progreso, que cambió de unidad', () => {
 
 		expect(laBarra(vista).attributes('aria-valuenow')).toBe('25');
 		expect(vista.text()).toContain('25%');
+	});
+});
+
+/**
+ * Lo que trajo el molde de la plantilla y nunca se usó.
+ *
+ * `useReactiveIcon()` estaba en `src/composables/` desde el primer commit y
+ * **ningún archivo lo importaba**: el instalador escribió `useIcono` en su lugar
+ * —con caché compartida— y dejó el original ahí. La única mención que quedaba
+ * era un comentario explicando por qué no se usa.
+ *
+ * Lo que lo hace peligroso no es que ocupe lugar: es que está disponible. Un
+ * composable muerto no se ve raro —se lee como una pieza de la casa— y el
+ * primero que necesite un icono lo va a usar. Así terminó habiendo una copia
+ * distinta en cada repositorio del taller: al contarlas quedaban nueve, con
+ * cinco firmas que ya no son intercambiables (Vasak-OS/vue-libvasak#54).
+ */
+describe('el composable de iconos del molde', () => {
+	// `fileURLToPath` y no `.pathname`: éste deja los caracteres codificados tal
+	// como están, así que un checkout en una ruta con un espacio llega con `%20`
+	// y `scanSync` no encuentra nada.
+	const FUENTE = fileURLToPath(new URL('../src/', import.meta.url));
+
+	// El patrón se ancla en `src/`, así que las rutas vuelven relativas a ahí.
+	const fuentes = [...new Glob('**/*.{vue,ts}').scanSync(FUENTE)];
+
+	test('hay algo que mirar', () => {
+		// Sin esto las dos de abajo pasan sobre una lista vacía, que es en lo que
+		// quedan si el patrón deja de encontrar archivos.
+		expect(fuentes).toContain('App.vue');
+		expect(fuentes.length).toBeGreaterThan(10);
+	});
+
+	test('ya no está', () => {
+		expect(fuentes.filter((ruta) => ruta.includes('useReactiveIcon'))).toEqual([]);
+	});
+
+	test('y nadie escribió otro con otro nombre', async () => {
+		// La forma de la copia y no su nombre: suscribirse al cambio de tema.
+		// `useIcono` es la excepción y está declarada: es el único lugar del
+		// instalador que lo hace, con un oyente a nivel de módulo para toda la
+		// aplicación, y su reemplazo por `ThemeIcon` va aparte —#63—.
+		const conOyente: string[] = [];
+		for (const ruta of fuentes) {
+			if (ruta === 'composables/useIcono.ts') continue;
+			const texto = await Bun.file(join(FUENTE, ruta)).text();
+			if (texto.includes('vicons:theme-changed')) conOyente.push(ruta);
+		}
+
+		expect(conOyente).toEqual([]);
 	});
 });
