@@ -3,10 +3,10 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { SwitchRow, TextInput } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import {
 	type Disco,
 	type EsquemaDisco,
@@ -210,7 +210,7 @@ onMounted(async () => {
                 "
                 aria-hidden="true"
               >
-                <IconoSistema :nombre="iconoDeDisco(disco)" tipo="icono" clase="size-7" />
+                <SystemIcon :name="iconoDeDisco(disco)" type="icon" size-class="size-7" />
               </span>
               <span class="min-w-0 flex-1 truncate font-medium text-sm">{{ disco.modelo }}</span>
               <span class="shrink-0 font-mono text-sm">{{ tamano(disco.tamano_bytes) }}</span>
@@ -450,7 +450,7 @@ onMounted(async () => {
           >
             <div class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 font-medium">
-                <IconoSistema :nombre="ICONO_ROL_PARTICION[particion.rol]" clase="size-4" />
+                <SystemIcon :name="ICONO_ROL_PARTICION[particion.rol]" size-class="size-4" />
                 {{ t(ROL_PARTICION[particion.rol] ?? 'disco.rolRaiz') }}
               </span>
               <span class="font-mono text-xs">{{ tamano(particion.tamano_bytes) }}</span>

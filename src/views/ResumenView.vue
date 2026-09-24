@@ -2,9 +2,9 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSistema from '@/components/ui/IconoSistema.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { formatearBytes, nombreDeIdioma, nombreDeZona } from '@/tools/formato';
 import { ICONO_PASO } from '@/tools/iconos';
@@ -150,7 +150,7 @@ async function autorizar() {
             :key="complemento.id"
             class="flex items-center gap-2 text-sm"
           >
-            <IconoSistema :nombre="complemento.icono" tipo="icono" clase="size-5" />
+            <SystemIcon :name="complemento.icono" type="icon" size-class="size-5" />
             {{ t(`complementos.items.${complemento.id}.nombre`) }}
           </li>
         </ul>

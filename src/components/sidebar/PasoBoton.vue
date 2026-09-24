@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import IconoSistema from '@/components/ui/IconoSistema.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import { ICONO_HECHO } from '@/tools/iconos';
 
 interface Props {
@@ -54,7 +54,7 @@ defineEmits<{ click: [] }>();
       "
       aria-hidden="true"
     >
-      <IconoSistema :nombre="icono" clase="size-5" />
+      <SystemIcon :name="icono" size-class="size-5" />
 
       <!--
         La marca de terminado es un emblema encima del icono del paso, no un
@@ -69,7 +69,7 @@ defineEmits<{ click: [] }>();
         v-if="estado === 'hecho'"
         class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full bg-status-success"
       >
-        <IconoSistema :nombre="ICONO_HECHO" clase="size-3" />
+        <SystemIcon :name="ICONO_HECHO" size-class="size-3" />
       </span>
     </span>
 
