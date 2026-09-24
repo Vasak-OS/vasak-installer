@@ -3,10 +3,10 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { SwitchRow } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSistema from '@/components/ui/IconoSistema.vue';
 import OpcionRadio from '@/components/ui/OpcionRadio.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import { type Complemento, useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_PASO } from '@/tools/iconos';
 
@@ -80,7 +80,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
             :key="descripcion"
             class="flex items-center gap-2 text-sm"
           >
-            <IconoSistema nombre="computer-chip" />
+            <SystemIcon name="computer-chip" />
             {{ descripcion }}
           </li>
         </ul>
@@ -127,7 +127,7 @@ const hayHardwareDetectado = computed(() => store.complementos.hardware.descripc
             >
               <template v-if="loPropusoElHardware(complemento)" #pie>
                 <span class="mt-1 flex items-center gap-1.5 text-status-success text-xs">
-                  <IconoSistema nombre="object-select" clase="size-3" />
+                  <SystemIcon name="object-select" size-class="size-3" />
                   {{ t('complementos.propuestoPorHardware') }}
                 </span>
               </template>

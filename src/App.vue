@@ -6,7 +6,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import type { ControlDeVentana } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
-import IconoSistema from '@/components/ui/IconoSistema.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -194,7 +194,7 @@ onUnmounted(() => {
       aparecía en ningún otro lado.
     -->
     <template #identidad>
-      <IconoSistema :nombre="ICONO_APLICACION" tipo="icono" clase="size-5" />
+      <SystemIcon :name="ICONO_APLICACION" type="icon" size-class="size-5" />
     </template>
     <template #titulo>
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>

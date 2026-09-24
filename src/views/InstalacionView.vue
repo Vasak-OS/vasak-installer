@@ -3,9 +3,9 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ProgressBar } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import AlertMessage from '@/components/ui/AlertMessage.vue';
-import IconoSistema from '@/components/ui/IconoSistema.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import SectionCard from '@/components/ui/SectionCard.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { ICONO_FALLADO, ICONO_HECHO, ICONO_PASO, ICONO_PASO_INSTALACION } from '@/tools/iconos';
 import { comoLapso, segundosDesde } from '@/tools/transcurrido';
@@ -200,15 +200,15 @@ watch(
               "
               aria-hidden="true"
             >
-              <IconoSistema :nombre="ICONO_PASO_INSTALACION[clave] ?? ''" clase="size-4" />
+              <SystemIcon :name="ICONO_PASO_INSTALACION[clave] ?? ''" size-class="size-4" />
               <span
                 v-if="estadoDe(clave) === 'hecho' || estadoDe(clave) === 'fallado'"
                 class="-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full"
                 :class="estadoDe(clave) === 'hecho' ? 'bg-status-success' : 'bg-status-error'"
               >
-                <IconoSistema
-                  :nombre="estadoDe(clave) === 'hecho' ? ICONO_HECHO : ICONO_FALLADO"
-                  clase="size-3"
+                <SystemIcon
+                  :name="estadoDe(clave) === 'hecho' ? ICONO_HECHO : ICONO_FALLADO"
+                  size-class="size-3"
                 />
               </span>
             </span>

@@ -166,18 +166,94 @@ describe('el composable de iconos del molde', () => {
 		expect(fuentes.filter((ruta) => ruta.includes('useReactiveIcon'))).toEqual([]);
 	});
 
-	test('y nadie escribió otro con otro nombre', async () => {
+	test('y nadie escribió otro con otro nombre — ya sin excepciones', async () => {
 		// La forma de la copia y no su nombre: suscribirse al cambio de tema.
-		// `useIcono` es la excepción y está declarada: es el único lugar del
-		// instalador que lo hace, con un oyente a nivel de módulo para toda la
-		// aplicación, y su reemplazo por `ThemeIcon` va aparte —#63—.
+		// `useIcono` era la excepción declarada acá y se fue con el #63, así que
+		// ya no queda ningún lugar del instalador que escuche ese aviso: lo hace
+		// la librería, una sola vez para toda la ventana.
 		const conOyente: string[] = [];
 		for (const ruta of fuentes) {
-			if (ruta === 'composables/useIcono.ts') continue;
 			const texto = await Bun.file(join(FUENTE, ruta)).text();
 			if (texto.includes('vicons:theme-changed')) conOyente.push(ruta);
 		}
 
 		expect(conOyente).toEqual([]);
+	});
+
+	test('y quien resuelve a mano es sólo el que no puede hacerlo de otra forma', async () => {
+		// El otro lado de lo mismo: importar el complemento de iconos. El
+		// oyente se puede escribir sin nombrar el evento, pero la fuente del
+		// icono no se consigue sin pedírsela a alguien.
+		//
+		// `main.ts` es la única excepción y no puede dejar de serlo: el menú del
+		// clic derecho lo dibuja el complemento **fuera de esta ventana**, así
+		// que pide una función que resuelva un nombre a una fuente, no un
+		// componente de Vue. Es la misma excepción que tiene `vasak-desktop`.
+		const aMano: string[] = [];
+		for (const ruta of fuentes) {
+			const texto = await Bun.file(join(FUENTE, ruta)).text();
+			if (texto.includes("from '@vasakgroup/plugin-vicons'")) aMano.push(ruta);
+		}
+
+		expect(aMano).toEqual(['main.ts']);
+	});
+});
+
+/**
+ * El icono del sistema, que ahora es una capa fina y no una implementación.
+ *
+ * `useIcono` + `IconoSistema` eran una copia de `ThemeIcon` que **sabía menos**:
+ * armaba su oyente una sola vez y nunca lo soltaba, y una resolución que volvía
+ * después de un cambio de tema se memorizaba igual, así que quedaba guardado el
+ * icono del tema anterior hasta el próximo cambio. La librería lleva cuenta de
+ * suscriptores y mete la versión del tema en la clave del pedido en vuelo.
+ *
+ * El motivo por el que la copia existía —que `ThemeIcon` resolvía uno por
+ * instancia, y acá se dibujan cerca de cuarenta al arrancar— dejó de ser cierto
+ * hace varias versiones.
+ */
+describe('el icono del sistema', () => {
+	const FUENTE = fileURLToPath(new URL('../src/', import.meta.url));
+	const leer = (ruta: string) => Bun.file(join(FUENTE, ruta)).text();
+
+	test('se llama en inglés y dibuja con la librería', async () => {
+		const texto = await leer('components/ui/SystemIcon.vue');
+
+		expect(texto).toContain("import { ThemeIcon } from '@vasakgroup/vue-libvasak'");
+		expect(texto).toMatch(/<ThemeIcon\b/);
+	});
+
+	test('el tamaño lo ponen las clases, no un número', async () => {
+		// Con un número, `ThemeIcon` escribe el alto y el ancho en línea y le
+		// gana a la clase: el `size-4` de acá no haría nada.
+		const texto = await leer('components/ui/SystemIcon.vue');
+
+		expect(texto).toContain('size="auto"');
+		expect(texto).not.toMatch(/<ThemeIcon[^>]*\s:?size="\d/s);
+	});
+
+	test('sigue siendo decorativo', async () => {
+		// Un icono al lado de un texto que dice lo mismo, leído en voz alta, es
+		// el texto dos veces.
+		const texto = await leer('components/ui/SystemIcon.vue');
+
+		expect(texto).toContain('alt=""');
+		// Va por `v-bind` y no como atributo suelto: `ThemeIcon` declara sus
+		// propiedades y `strictTemplates` rechaza lo que no esté en esa lista,
+		// aunque el atributo llegue igual por `$attrs`.
+		expect(texto).toContain("'aria-hidden': 'true'");
+	});
+
+	test('no quedó nada del par viejo', async () => {
+		const fuentes = [...new Glob('**/*.{vue,ts}').scanSync(FUENTE)];
+
+		expect(fuentes.filter((r) => r.includes('IconoSistema') || r.includes('useIcono'))).toEqual(
+			[]
+		);
+		for (const ruta of fuentes) {
+			const texto = await leer(ruta);
+			expect(texto).not.toContain('IconoSistema');
+			expect(texto).not.toContain('useIcono');
+		}
 	});
 });

@@ -12,7 +12,7 @@
  * `role="radio"` dentro de un `radiogroup` es lo que corresponde: se anuncia
  * como «opción 2 de 3» y el estado del grupo entero se entiende de una.
  */
-import IconoSistema from '@/components/ui/IconoSistema.vue';
+import SystemIcon from '@/components/ui/SystemIcon.vue';
 
 interface Props {
 	seleccionada: boolean;
@@ -25,10 +25,10 @@ interface Props {
 	 * A color donde el icono **es** la cosa que se elige —un navegador, un
 	 * sistema de archivos—, que es el caso de casi todas las opciones.
 	 */
-	tipoIcono?: 'icono' | 'simbolo';
+	iconType?: 'icon' | 'symbol';
 	disabled?: boolean;
 }
-withDefaults(defineProps<Props>(), { disabled: false, tipoIcono: 'icono' });
+withDefaults(defineProps<Props>(), { disabled: false, iconType: 'icon' });
 defineEmits<{ elegir: [] }>();
 </script>
 
@@ -52,7 +52,7 @@ defineEmits<{ elegir: [] }>();
       :class="seleccionada ? 'border-secondary bg-primary/20' : 'border-ui-border bg-ui-surface/40'"
       aria-hidden="true"
     >
-      <IconoSistema :nombre="icono" :tipo="tipoIcono" clase="size-6" />
+      <SystemIcon :name="icono" :type="iconType" size-class="size-6" />
     </span>
 
     <span class="min-w-0 flex-1">
