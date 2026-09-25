@@ -758,6 +758,37 @@ def _usuarios_de(destino):
     return {linea.split(":", 1)[0] for linea in texto.splitlines() if ":" in linea}
 
 
+def _cuerpo_de_initial_session(texto):
+    """El cuerpo de la tabla `[initial_session]`, o `None` si no está.
+
+    Sólo se usa cuando `tomllib` no pudo leer el archivo, así que el texto
+    puede estar roto y no se le puede pedir que lo interprete. Se recorre
+    línea a línea: la tabla termina en el primer comienzo de línea que abre
+    otra tabla, que es lo mismo que separaba las dos en la versión anterior
+    con expresión regular.
+
+    Devolver el cuerpo crudo y no sólo el `user` deja la búsqueda de la
+    clave para quien llama, igual que antes.
+    """
+    lineas = texto.splitlines()
+
+    inicio = None
+    for indice, linea in enumerate(lineas):
+        if linea == "[initial_session]":
+            inicio = indice + 1
+            break
+    if inicio is None:
+        return None
+
+    cuerpo = []
+    for linea in lineas[inicio:]:
+        if linea.startswith("["):
+            break
+        cuerpo.append(linea)
+
+    return "\n".join(cuerpo)
+
+
 def _leer_greetd(config):
     """Qué dice la configuración de greetd: si se entiende, y a quién le abre sola.
 
@@ -782,12 +813,10 @@ def _leer_greetd(config):
         # darlo por «no hay» sería justo el error que este control existe para
         # evitar. Se busca la sección a mano, como hace con `sed` el hook de
         # vasak-session-manager.
-        seccion = re.search(
-            r"^\[initial_session\](.*?)(?=^\[|\Z)", texto, re.MULTILINE | re.DOTALL
-        )
+        seccion = _cuerpo_de_initial_session(texto)
         if seccion is None:
             return False, None
-        usuario = re.search(r'^\s*user\s*=\s*"([^"]*)"', seccion.group(1), re.MULTILINE)
+        usuario = re.search(r'^\s*user\s*=\s*"([^"]*)"', seccion, re.MULTILINE)
         return False, (usuario.group(1) if usuario else None)
 
     if not isinstance(inicial, dict):
