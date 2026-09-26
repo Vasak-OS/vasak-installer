@@ -279,20 +279,50 @@ describe('los complementos', () => {
 		expect(store.puedeAvanzar('complementos')).toBe(true);
 	});
 
-	test('elegir otro navegador saca al anterior', () => {
-		const store = conCatalogo();
-		store.alternarComplemento('chromium');
-		// Dos navegadores marcados a la vez es un estado que el grupo de opciones
-		// no puede dibujar, y el plan instalaría los dos.
-		expect(store.eleccion.complementos).toEqual(['chromium']);
-	});
+	/**
+	 * Alternar un id y ver en qué queda la selección.
+	 *
+	 * Los tres casos son la misma operación con otro id y otra lista esperada, así
+	 * que van en una tabla. El `nombre` está porque sin él el fallo sale como
+	 * «esperaba esta lista y llegó esta otra» y no dice cuál de los tres formuló
+	 * mal: los dos últimos comparten la misma lista esperada —uno porque se
+	 * reaprieta el mismo, otro porque el id no existe— y sólo el nombre los
+	 * distingue.
+	 *
+	 * Lo que se vigila en cada fila, y por qué:
+	 *
+	 * - otro navegador: dos navegadores marcados a la vez es un estado que el
+	 *   grupo de opciones no puede dibujar, y el plan instalaría los dos;
+	 * - el mismo navegador otra vez: en un grupo del que se elige uno no existe
+	 *   «ninguno», y para eso está la opción explícita «Ninguno» del catálogo;
+	 * - un id que no está: el catálogo manda, no lo que se le pasó.
+	 *
+	 * «Los que no son excluyentes se marcan y se desmarcan» queda aparte a
+	 * propósito: alterna el mismo id **dos veces** y su estado final es
+	 * intermediario, así que no es una fila de esta tabla sino otro test.
+	 */
+	const ALTERNATIVAS: { nombre: string; id: string; esperado: string[] }[] = [
+		{
+			nombre: 'elegir otro navegador saca al anterior',
+			id: 'chromium',
+			esperado: ['chromium'],
+		},
+		{
+			nombre: 'volver a apretar el navegador elegido no lo desmarca',
+			id: 'firefox',
+			esperado: ['firefox'],
+		},
+		{
+			nombre: 'un id que no está en el catálogo no hace nada',
+			id: 'no-existe',
+			esperado: ['firefox'],
+		},
+	];
 
-	test('volver a apretar el navegador elegido no lo desmarca', () => {
+	test.each(ALTERNATIVAS)('$nombre', ({ id, esperado }) => {
 		const store = conCatalogo();
-		store.alternarComplemento('firefox');
-		// En un grupo del que se elige uno, no existe «ninguno»: para eso está la
-		// opción explícita «Ninguno» del catálogo.
-		expect(store.eleccion.complementos).toEqual(['firefox']);
+		store.alternarComplemento(id);
+		expect(store.eleccion.complementos).toEqual(esperado);
 	});
 
 	test('los que no son excluyentes se marcan y se desmarcan', () => {
@@ -312,12 +342,6 @@ describe('los complementos', () => {
 		// Así el resumen enumera siempre igual y dos instalaciones con la misma
 		// elección se pueden comparar.
 		expect(store.eleccion.complementos).toEqual(['firefox', 'impresoras', 'juegos']);
-	});
-
-	test('un id que no está en el catálogo no hace nada', () => {
-		const store = conCatalogo();
-		store.alternarComplemento('no-existe');
-		expect(store.eleccion.complementos).toEqual(['firefox']);
 	});
 
 	test('el plan lleva los elegidos', () => {
