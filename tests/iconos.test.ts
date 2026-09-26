@@ -140,15 +140,21 @@ describe('los iconos que nombra el instalador', () => {
 	// nombres, la guarda daba verdadero, y los seis tests que buscan iconos de
 	// VasakOS fallaban todos por lo mismo — no porque un nombre estuviera mal,
 	// sino porque el tema no estaba.
+	//
+	// La guarda va en `test.skipIf` y no como un `return` al principio del cuerpo
+	// por dos razones. Una: `skipIf` es donde dice que esto es una guarda de
+	// ambiente y no una línea cualquiera, y el nombre del test sigue viendo la
+	// condición si algún día hay que revisarla. Dos, y esta es la que importa: un
+	// `return` reportaba **verde**. En una máquina sin el tema, los seis tests
+	// salían en verde sin haber comprobado un solo icono, que es un informe que
+	// miente. Ahora salen `skip`, que es lo que son.
 	const hayTema = TEMAS_VASAK.some(existsSync);
 
-	test('el tema está instalado y se pudo leer', () => {
-		if (!hayTema) return;
+	test.skipIf(!hayTema)('el tema está instalado y se pudo leer', () => {
 		expect(RUTAS.size).toBeGreaterThan(100);
 	});
 
-	test('todos existen en el tema', () => {
-		if (!hayTema) return;
+	test.skipIf(!hayTema)('todos existen en el tema', () => {
 		expect(todosLosIconos().filter((nombre) => !existe(nombre))).toEqual([]);
 	});
 
@@ -181,9 +187,7 @@ describe('los iconos que nombra el instalador', () => {
 	 * es un archivo nuestro con una forma conocida, y traer un parser al frontend
 	 * sólo para este test sería una dependencia por un `grep`.
 	 */
-	test('los iconos del catálogo de complementos existen a color', () => {
-		if (!hayTema) return;
-
+	test.skipIf(!hayTema)('los iconos del catálogo de complementos existen a color', () => {
 		const toml = readFileSync('src-tauri/complementos.toml', 'utf8');
 		const iconos = [...toml.matchAll(/^icono\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
 		expect(iconos.length).toBeGreaterThan(5);
@@ -198,8 +202,7 @@ describe('los iconos que nombra el instalador', () => {
 	 * Chromium y Brave son tres contornos que nadie distingue, y elegir navegador
 	 * mirando tres contornos iguales no es elegir.
 	 */
-	test('los navegadores tienen su icono de aplicación a color', () => {
-		if (!hayTema) return;
+	test.skipIf(!hayTema)('los navegadores tienen su icono de aplicación a color', () => {
 		for (const nombre of ['firefox', 'chromium', 'brave-browser']) {
 			expect(hayVersionAColor(nombre)).toBe(true);
 		}
@@ -211,8 +214,7 @@ describe('los iconos que nombra el instalador', () => {
 	 * Al revés que el caso de arriba: un nombre que sólo existe a color, pedido
 	 * como símbolo, también cae en `image-missing`.
 	 */
-	test('los iconos de los pasos existen en versión simbólica', () => {
-		if (!hayTema) return;
+	test.skipIf(!hayTema)('los iconos de los pasos existen en versión simbólica', () => {
 		const sinSimbolo = Object.values(ICONO_PASO).filter((n) => !hayVersionSimbolica(n));
 		expect(sinSimbolo).toEqual([]);
 	});
@@ -258,10 +260,9 @@ describe('los iconos que nombra el instalador', () => {
 		expect(linea).toBe(`Icon=${ICONO_APLICACION}`);
 	});
 
-	test('el icono de la aplicación existe a color en el tema', () => {
+	test.skipIf(!hayTema)('el icono de la aplicación existe a color en el tema', () => {
 		// Va a color y no simbólico: es la identidad de la aplicación, no una
 		// marca de estado. Pedirlo a color sin que exista devuelve `image-missing`.
-		if (!hayTema) return;
 		expect(hayVersionAColor(ICONO_APLICACION)).toBe(true);
 	});
 
