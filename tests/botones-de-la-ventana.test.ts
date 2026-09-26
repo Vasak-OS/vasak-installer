@@ -91,7 +91,7 @@ describe('mientras el ayudante escribe el disco', () => {
 
 		for (const boton of ventana.findAll('button')) await boton.trigger('click');
 
-		expect(pedidos('plugin:window|close').length).toBe(0);
+		expect(pedidos('plugin:window|close')).toHaveLength(0);
 	});
 });
 
