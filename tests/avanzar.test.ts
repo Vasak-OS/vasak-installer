@@ -337,7 +337,7 @@ describe('el registro', () => {
 		for (let i = 0; i < 1200; i++) {
 			store.anotarRegistro({ nivel: 'info', linea: `línea ${i}` });
 		}
-		expect(store.registro.length).toBe(500);
+		expect(store.registro).toHaveLength(500);
 		// Y lo que se conserva es el final, que es donde dice qué falló.
 		expect(store.registro[store.registro.length - 1].linea).toBe('línea 1199');
 	});
