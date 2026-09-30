@@ -1,6 +1,6 @@
 [package]
 name = "vasak-installer"
-version = "0.12.1"
+version = "0.12.2"
 description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -64,7 +64,7 @@ libc = "0.2"
 # El catálogo de complementos (navegador, controladores, impresoras) es un TOML
 # que se lee en tiempo de ejecución: sumar un navegador tiene que ser editar un
 # archivo de datos, no recompilar el instalador ni rehacer la ISO.
-toml = "0.8"
+toml = "1"
 
 [dev-dependencies]
 # Árboles de `/sys` de mentira para probar la detección de hardware: no hay forma
