@@ -56,7 +56,9 @@ const yesNo = (value: boolean) => (value ? t('comun.si') : t('comun.no'));
  * viaja en el plan, y la ranura le suma el modelo y el tamaño al lado.
  */
 const diskRows = computed<PropertyItem[]>(() => [
-	{ id: 'disk', label: t('resumen.campoDisco'), value: store.eleccion.disco, mono: true },
+	// Sin `mono` en la fila: la ruta va en mono desde la ranura, y el modelo
+	// que va al lado, no.
+	{ id: 'disk', label: t('resumen.campoDisco'), value: store.eleccion.disco },
 	{ id: 'scheme', label: t('resumen.campoEsquema'), value: t(schemeName.value) },
 	{
 		id: 'filesystem',
