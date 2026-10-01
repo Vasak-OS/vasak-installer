@@ -3,10 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import type { ControlDeVentana } from '@vasakgroup/vue-libvasak';
+import { ActionButton, type ControlDeVentana, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
-import SystemIcon from '@/components/ui/SystemIcon.vue';
+import StepList from '@/components/sidebar/StepList.vue';
+import StepsSidebar from '@/components/sidebar/StepsSidebar.vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	type LineaRegistro,
@@ -15,41 +15,42 @@ import {
 	type ProgresoPaso,
 	useInstalacionStore,
 } from '@/stores/instalacion';
-import { ICONO_APLICACION } from '@/tools/iconos';
-import BienvenidaView from '@/views/BienvenidaView.vue';
-import ComplementosView from '@/views/ComplementosView.vue';
-import CuentaView from '@/views/CuentaView.vue';
-import DiscoView from '@/views/DiscoView.vue';
-import FinView from '@/views/FinView.vue';
-import InstalacionView from '@/views/InstalacionView.vue';
-import RedView from '@/views/RedView.vue';
+import { APP_ICON, BACK_ICON, STEP_LIST_ICON } from '@/tools/icons';
+import { interpolar } from '@/tools/interpolar';
+import AccountView from '@/views/AccountView.vue';
+import AddonsView from '@/views/AddonsView.vue';
+import DiskView from '@/views/DiskView.vue';
+import FinishView from '@/views/FinishView.vue';
+import InstallationView from '@/views/InstallationView.vue';
+import KeyboardView from '@/views/KeyboardView.vue';
+import NetworkView from '@/views/NetworkView.vue';
 import RegionView from '@/views/RegionView.vue';
-import ResumenView from '@/views/ResumenView.vue';
-import TecladoView from '@/views/TecladoView.vue';
+import SummaryView from '@/views/SummaryView.vue';
+import WelcomeView from '@/views/WelcomeView.vue';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
 
-const vistas = {
-	bienvenida: BienvenidaView,
-	red: RedView,
+const views = {
+	bienvenida: WelcomeView,
+	red: NetworkView,
 	region: RegionView,
-	teclado: TecladoView,
-	disco: DiscoView,
-	cuenta: CuentaView,
-	complementos: ComplementosView,
-	resumen: ResumenView,
-	instalacion: InstalacionView,
-	fin: FinView,
+	teclado: KeyboardView,
+	disco: DiskView,
+	cuenta: AccountView,
+	complementos: AddonsView,
+	resumen: SummaryView,
+	instalacion: InstallationView,
+	fin: FinishView,
 } as const;
 
-const contenido = ref<HTMLElement | null>(null);
-const errorAlArrancar = ref<string | null>(null);
-const desuscribir = ref<UnlistenFn[]>([]);
+const content = ref<HTMLElement | null>(null);
+const startError = ref<string | null>(null);
+const unlisteners = ref<UnlistenFn[]>([]);
 
-const indice = computed(() => PASOS.indexOf(store.paso));
-const esUltimo = computed(() => store.paso === 'fin');
-const enInstalacion = computed(() => store.paso === 'instalacion');
+const index = computed(() => PASOS.indexOf(store.paso));
+const isLast = computed(() => store.paso === 'fin');
+const inInstallation = computed(() => store.paso === 'instalacion');
 
 /**
  * El botón «Continuar» se muestra sólo mientras hay algo que responder.
@@ -58,49 +59,60 @@ const enInstalacion = computed(() => store.paso === 'instalacion');
  * ir: dejarlo puesto y deshabilitado sugiere que en algún momento se va a poder
  * apretar.
  */
-const muestraNavegacion = computed(() => !enInstalacion.value && !esUltimo.value);
+const showsNavigation = computed(() => !inInstallation.value && !isLast.value);
 
-function irA(paso: Paso) {
-	store.paso = paso;
+/**
+ * La ficha de pasos de la ventana angosta está abierta.
+ *
+ * Sólo cuenta por debajo de 30rem de ancho (ver la plantilla): ahí no entran la
+ * barra y el contenido lado a lado, y va una columna por vez, como en una
+ * aplicación de celular — el contenido del paso, o la lista de pasos con un
+ * «volver». En una ventana ancha esto no cambia nada: la barra está siempre.
+ */
+const showSteps = ref(false);
+
+function goTo(step: Paso) {
+	showSteps.value = false;
+	store.paso = step;
 	// El foco y el desplazamiento vuelven arriba al cambiar de paso. Sin esto,
 	// alguien que venía del final de una página larga aterriza en el medio de la
 	// siguiente, y quien usa lector de pantalla se queda donde estaba, oyendo el
 	// contenido anterior.
-	contenido.value?.scrollTo({ top: 0 });
-	contenido.value?.focus();
+	content.value?.scrollTo({ top: 0 });
+	content.value?.focus();
 }
 
-function atras() {
-	const anterior = PASOS[indice.value - 1];
-	if (anterior && !store.navegacionBloqueada) irA(anterior);
+function back() {
+	const previous = PASOS[index.value - 1];
+	if (previous && !store.navegacionBloqueada) goTo(previous);
 }
 
-async function siguiente() {
+async function next() {
 	if (store.paso === 'resumen') {
-		await arrancarInstalacion();
+		await startInstallation();
 		return;
 	}
-	const proximo = PASOS[indice.value + 1];
-	if (proximo) irA(proximo);
+	const following = PASOS[index.value + 1];
+	if (following) goTo(following);
 }
 
-async function arrancarInstalacion() {
-	errorAlArrancar.value = null;
+async function startInstallation() {
+	startError.value = null;
 	try {
 		await invoke('instalar', { plan: store.armarPlan() });
 		// A partir de acá no hay vuelta atrás: el ayudante ya está escribiendo.
 		store.navegacionBloqueada = true;
-		irA('instalacion');
+		goTo('instalacion');
 		// Las contraseñas ya viajaron y se convirtieron en hash del otro lado; no
 		// hay ninguna razón para que sigan en memoria de la ventana durante la
 		// media hora que dura la instalación.
 		store.olvidarSecretos();
 	} catch (error) {
-		errorAlArrancar.value = String(error);
+		startError.value = String(error);
 	}
 }
 
-async function cancelar() {
+async function cancel() {
 	try {
 		await invoke('cancelar_instalacion');
 	} catch (error) {
@@ -120,12 +132,12 @@ async function cancelar() {
  * hay nada escribiendo. Y mientras corre, la salida es el «cancelar» de la
  * pantalla de instalación, que pregunta y detiene al ayudante antes.
  */
-const instalando = computed(
+const installing = computed(
 	() => store.navegacionBloqueada && !store.terminada && store.fallo === null
 );
 
-const controlesDeLaVentana = computed<ControlDeVentana[]>(() =>
-	instalando.value ? ['minimize', 'maximize'] : ['minimize', 'maximize', 'close']
+const windowControls = computed<ControlDeVentana[]>(() =>
+	installing.value ? ['minimize', 'maximize'] : ['minimize', 'maximize', 'close']
 );
 
 onMounted(async () => {
@@ -135,7 +147,7 @@ onMounted(async () => {
 	try {
 		const configStore = useConfigStore();
 		await configStore.loadConfig();
-		desuscribir.value.push(
+		unlisteners.value.push(
 			await listen('config-changed', () => {
 				document.startViewTransition(() => configStore.loadConfig());
 			})
@@ -144,7 +156,7 @@ onMounted(async () => {
 		console.error('no se pudo cargar la configuración', error);
 	}
 
-	desuscribir.value.push(
+	unlisteners.value.push(
 		await listen<ProgresoPaso>('instalacion://progreso', (evento) => {
 			store.anotarProgreso(evento.payload);
 		}),
@@ -154,7 +166,7 @@ onMounted(async () => {
 		await listen<{ ok: boolean; error: string | null }>('instalacion://fin', (evento) => {
 			if (evento.payload.ok) {
 				store.terminada = true;
-				irA('fin');
+				goTo('fin');
 			} else {
 				store.fallo = evento.payload.error ?? t('errores.desconocido');
 			}
@@ -173,12 +185,12 @@ onMounted(async () => {
 	try {
 		await store.cargarSondeo();
 	} catch (error) {
-		errorAlArrancar.value = String(error);
+		startError.value = String(error);
 	}
 });
 
 onUnmounted(() => {
-	for (const fn of desuscribir.value) fn();
+	for (const fn of unlisteners.value) fn();
 	// Por si la ventana se cierra antes de instalar: las contraseñas no tienen
 	// por qué sobrevivir al componente.
 	store.olvidarSecretos();
@@ -186,7 +198,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <WindowAppLayout :controls="controlesDeLaVentana">
+  <WindowAppLayout :controls="windowControls">
     <!--
       La barra de título propia: icono a la izquierda, nombre al medio. Sin esto
       quedaba con los tres botones de la ventana flotando sobre nada — y como la
@@ -194,70 +206,114 @@ onUnmounted(() => {
       aparecía en ningún otro lado.
     -->
     <template #identidad>
-      <SystemIcon :name="ICONO_APLICACION" type="icon" size-class="size-5" />
+      <ThemeIcon :name="APP_ICON" type="icon" :size="20" />
     </template>
     <template #titulo>
       <span class="truncate font-medium text-sm">{{ t('app.nombre') }}</span>
     </template>
 
-    <!-- `p-1` y `gap-1`: la barra lateral es una tarjeta con borde y esquina
-         redondeada, y pegada al borde de la ventana se le come el redondeo. Es
-         la misma distancia que separa todo en el resto de las ventanas. -->
-    <div class="flex min-h-0 w-full flex-1 gap-1 p-1">
-      <PasosSidebar
-        :actual="store.paso"
-        :navegable="!store.navegacionBloqueada"
-        @ir="irA"
-      />
+    <!--
+      `p-1` y `gap-1`: la barra lateral es una tarjeta con borde y esquina
+      redondeada, y pegada al borde de la ventana se le come el redondeo. Es la
+      misma distancia que separa todo en el resto de las ventanas.
+
+      `@container/window` es la fila de la ventana: lo que cambia con el ancho
+      se decide por **su** ancho y no por el de la pantalla (WebKitGTK no avisa
+      de `resize`). Por debajo de 30rem no entran dos columnas y va una por vez:
+      la barra se esconde y su lugar lo toma una franja con el paso actual, que
+      abre la ficha de pasos. De 30rem para arriba, como siempre.
+    -->
+    <div class="@container/window flex min-h-0 w-full min-w-0 flex-1">
+    <div class="flex min-h-0 w-full min-w-0 flex-1 gap-1 p-1">
+      <div class="flex min-h-0 @max-[30rem]/window:hidden" data-steps-rail>
+        <StepsSidebar
+          :current="store.paso"
+          :navigable="!store.navegacionBloqueada"
+          @go="goTo"
+        />
+      </div>
+
+      <!-- La ficha de pasos: la misma lista que la barra, a todo el ancho, con
+           un «volver» arriba. Sólo existe angosta y cuando se la pidió. -->
+      <div
+        v-if="showSteps"
+        class="hidden min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-corner-l border border-ui-line bg-ui-surface/70 @max-[30rem]/window:flex"
+        data-steps-sheet
+      >
+        <div class="flex shrink-0 items-center border-ui-line-weak border-b p-2">
+          <ActionButton
+            :label="t('barraLateral.backToStep')"
+            :icon="BACK_ICON"
+            variant="ghost"
+            @click="showSteps = false"
+          />
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto p-2">
+          <StepList :current="store.paso" :navigable="!store.navegacionBloqueada" @go="goTo" />
+        </div>
+      </div>
 
       <!-- El contenido también es un panel apoyado sobre la ventana, así que
            va en superficie: `--ui-background` es el token de **la ventana**, y
            con el fondo de ventana puesto acá el escritorio se ve a través del
-           paso que se está completando. -->
+           paso que se está completando. Es la tarjeta de Once UI, la misma que
+           la barra de al lado: `rounded-corner-l` y el canto `ui-line`. -->
       <div
-        class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-corner border border-ui-border bg-ui-surface/70">
+        class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-corner-l border border-ui-line bg-ui-surface/70"
+        :class="showSteps ? '@max-[30rem]/window:hidden' : ''"
+        data-step-content
+      >
+        <!-- La franja del paso actual, sólo angosta: es lo que queda de la
+             barra cuando no entra, y la puerta a la ficha de pasos. -->
+        <div class="hidden shrink-0 border-ui-line border-b p-2 @max-[30rem]/window:flex" data-steps-bar>
+          <ActionButton
+            :label="interpolar(t('barraLateral.showSteps'), index + 1, PASOS.length, t(`pasos.${store.paso}.titulo`))"
+            :icon="STEP_LIST_ICON"
+            variant="ghost"
+            full-width
+            @click="showSteps = true"
+          />
+        </div>
         <!--
           `tabindex="-1"` para poder mover el foco acá al cambiar de paso sin
           meter el contenedor en el orden de tabulación. Es lo que hace que un
           lector de pantalla anuncie la página nueva en vez de seguir donde
           estaba.
         -->
-        <main ref="contenido" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto p-6 outline-none">
-          <component :is="vistas[store.paso]" @cancelar="cancelar" />
+        <main ref="content" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto p-6 outline-none @max-[30rem]/window:p-3">
+          <component :is="views[store.paso]" @cancelar="cancel" />
 
-          <p v-if="errorAlArrancar" role="alert" class="mt-4 text-status-error text-sm">
-            {{ errorAlArrancar }}
+          <p v-if="startError" role="alert" class="mt-4 text-status-error text-sm">
+            {{ startError }}
           </p>
         </main>
 
         <footer
-          v-if="muestraNavegacion"
-          class="flex shrink-0 items-center justify-between gap-3 border-ui-border border-t p-4"
+          v-if="showsNavigation"
+          class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-ui-line border-t p-4 @max-[30rem]/window:p-3"
         >
-          <button
-            type="button"
-            :disabled="indice === 0 || store.navegacionBloqueada"
-            class="rounded-corner border border-ui-border-strong px-4 py-2 text-sm transition-colors hover:bg-ui-surface disabled:cursor-not-allowed disabled:opacity-40"
-            @click="atras"
-          >
-            {{ t('comun.atras') }}
-          </button>
+          <ActionButton
+            :label="t('comun.atras')"
+            variant="secondary"
+            size="lg"
+            :disabled="index === 0 || store.navegacionBloqueada"
+            @click="back"
+          />
 
-          <button
-            type="button"
+          <!-- En el resumen el botón es el punto sin retorno: `danger`, el
+               rojo del esquema con su texto calculado para el contraste. Antes
+               iba `text-ui-bg` sobre el rojo, el fondo de la ventana usado
+               como color de letra. -->
+          <ActionButton
+            :label="store.paso === 'resumen' ? t('resumen.confirmar') : t('comun.siguiente')"
+            :variant="store.paso === 'resumen' ? 'danger' : 'primary'"
+            size="lg"
             :disabled="!store.puedeAvanzar(store.paso)"
-            class="rounded-corner px-4 py-2 font-medium text-sm transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-            :class="
-              store.paso === 'resumen'
-                ? 'bg-status-error text-ui-bg hover:opacity-90'
-                : 'bg-primary text-tx-on-primary hover:opacity-90'
-            "
-            @click="siguiente"
-          >
-            {{ store.paso === 'resumen' ? t('resumen.confirmar') : t('comun.siguiente') }}
-          </button>
+            @click="next"
+          />
         </footer>
       </div>
+    </div>
     </div>
   </WindowAppLayout>
 </template>

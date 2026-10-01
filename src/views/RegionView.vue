@@ -1,47 +1,52 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { SearchSelect, SwitchRow, TextInput } from '@vasakgroup/vue-libvasak';
+import {
+	AlertMessage,
+	ConfigSection,
+	PageHeader,
+	Panel,
+	SearchSelect,
+	SwitchRow,
+	TextInput,
+} from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
-import AlertMessage from '@/components/ui/AlertMessage.vue';
-import PageHeader from '@/components/ui/PageHeader.vue';
-import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { nombreDeIdioma, nombreDeZona } from '@/tools/formato';
-import { ICONO_PASO } from '@/tools/iconos';
+import { STEP_ICONS } from '@/tools/icons';
 
 const { t, locale } = useI18n();
 const store = useInstalacionStore();
 
-const opcionesZona = computed(() =>
-	store.catalogos.zonas.map((zona) => {
-		const { region, ciudad } = nombreDeZona(zona);
-		return { valor: zona, etiqueta: ciudad, detalle: region };
+const zoneOptions = computed(() =>
+	store.catalogos.zonas.map((zone) => {
+		const { region, ciudad } = nombreDeZona(zone);
+		return { valor: zone, etiqueta: ciudad, detalle: region };
 	})
 );
 
-const opcionesIdioma = computed(() =>
-	store.catalogos.idiomas.map((local) => ({
-		valor: local,
-		etiqueta: nombreDeIdioma(local, locale.value),
-		detalle: local,
+const languageOptions = computed(() =>
+	store.catalogos.idiomas.map((code) => ({
+		valor: code,
+		etiqueta: nombreDeIdioma(code, locale.value),
+		detalle: code,
 	}))
 );
 
 // Sin catálogo no se puede ofrecer una lista, así que se deja escribir a mano.
 // Un desplegable vacío deja el paso sin salida; un campo de texto al menos
 // permite seguir con el valor que la persona sepa.
-const sinZonas = computed(() => store.catalogos.zonas.length === 0);
-const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
+const noZones = computed(() => store.catalogos.zonas.length === 0);
+const noLanguages = computed(() => store.catalogos.idiomas.length === 0);
 </script>
 
 <template>
   <div>
-    <PageHeader :icono="ICONO_PASO.region" :titulo="t('region.titulo')" />
+    <PageHeader class="mb-5" :icon="STEP_ICONS.region" icon-type="symbol" :title="t('region.titulo')" />
 
     <div class="space-y-4">
-      <SectionCard :titulo="t('region.zonaHoraria')" :descripcion="t('region.zonaHorariaAyuda')">
+      <ConfigSection :title="t('region.zonaHoraria')" :description="t('region.zonaHorariaAyuda')" as="h2">
         <TextInput
-          v-if="sinZonas"
+          v-if="noZones"
           v-model="store.eleccion.zonaHoraria"
           :ariaLabel="t('region.zonaHoraria')"
           mono
@@ -51,16 +56,16 @@ const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
           v-else
           v-model="store.eleccion.zonaHoraria"
           :label="t('region.zonaHoraria')"
-          :options="opcionesZona"
+          :options="zoneOptions"
           :search-placeholder="t('comun.buscar')"
           :empty-text="t('comun.sinResultados')"
         />
-        <p v-if="sinZonas" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
-      </SectionCard>
+        <p v-if="noZones" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
+      </ConfigSection>
 
-      <SectionCard :titulo="t('region.idiomaSistema')" :descripcion="t('region.idiomaSistemaAyuda')">
+      <ConfigSection :title="t('region.idiomaSistema')" :description="t('region.idiomaSistemaAyuda')" as="h2">
         <TextInput
-          v-if="sinIdiomas"
+          v-if="noLanguages"
           v-model="store.eleccion.idiomaSistema"
           :ariaLabel="t('region.idiomaSistema')"
           mono
@@ -70,22 +75,22 @@ const sinIdiomas = computed(() => store.catalogos.idiomas.length === 0);
           v-else
           v-model="store.eleccion.idiomaSistema"
           :label="t('region.idiomaSistema')"
-          :options="opcionesIdioma"
+          :options="languageOptions"
           :search-placeholder="t('comun.buscar')"
           :empty-text="t('comun.sinResultados')"
         />
-        <p v-if="sinIdiomas" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
-      </SectionCard>
+        <p v-if="noLanguages" class="mt-2 text-tx-muted text-xs">{{ t('region.sinCatalogo') }}</p>
+      </ConfigSection>
 
-      <SectionCard>
+      <Panel>
         <SwitchRow
           v-model="store.eleccion.ntp"
           :label="t('region.ntp')"
           :description="t('region.ntpAyuda')"
         />
-      </SectionCard>
+      </Panel>
 
-      <AlertMessage v-if="sinZonas || sinIdiomas" tone="warning">
+      <AlertMessage v-if="noZones || noLanguages" tone="warning" icon="auto">
         {{ t('region.sinCatalogo') }}
       </AlertMessage>
     </div>

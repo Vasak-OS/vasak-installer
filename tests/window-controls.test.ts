@@ -29,7 +29,7 @@ let vista: VueWrapper | null = null;
  */
 function abrir() {
 	vista = mount(App, {
-		global: { stubs: { BienvenidaView: { template: '<div class="paso" />' } } },
+		global: { stubs: { WelcomeView: { template: '<div class="paso" />' } } },
 	});
 	return vista;
 }

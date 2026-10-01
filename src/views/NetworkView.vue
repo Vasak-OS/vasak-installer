@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { ActionButton, AlertMessage, PageHeader, Panel } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import AlertMessage from '@/components/ui/AlertMessage.vue';
-import PageHeader from '@/components/ui/PageHeader.vue';
-import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
-import { ICONO_PASO } from '@/tools/iconos';
+import { STEP_ICONS } from '@/tools/icons';
 import { interpolar } from '@/tools/interpolar';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
-const comprobando = ref(false);
+const checking = ref(false);
 
 /**
  * Cuánto se descarga, aproximadamente.
@@ -20,7 +18,7 @@ const comprobando = ref(false);
  * que sólo tiene que dar el orden de magnitud. Lo que importa es que quien está
  * con datos móviles lo sepa antes de empezar.
  */
-const TAMANO_APROXIMADO = '3 GB';
+const APPROXIMATE_SIZE = '3 GB';
 
 /**
  * Se vuelve a comprobar solo cada tanto.
@@ -29,59 +27,59 @@ const TAMANO_APROXIMADO = '3 GB';
  * red— y volver. Sin el sondeo automático, vuelve y el paso sigue diciendo que
  * no hay conexión hasta que descubre el botón.
  */
-const INTERVALO_MS = 4000;
-let temporizador: number | undefined;
+const INTERVAL_MS = 4000;
+let timer: number | undefined;
 
-const hayRed = computed(() => store.sistema?.hay_red === true);
+const online = computed(() => store.sistema?.hay_red === true);
 
-async function comprobar() {
-	comprobando.value = true;
+async function check() {
+	checking.value = true;
 	try {
 		await store.comprobarRed();
 	} finally {
-		comprobando.value = false;
+		checking.value = false;
 	}
 }
 
 onMounted(() => {
-	comprobar();
+	check();
 	// Un solo temporizador, y se detiene al salir del paso. Sin el `clearInterval`
 	// el sondeo sigue corriendo durante toda la instalación, despertando el
 	// proceso cada cuatro segundos para nada.
-	temporizador = window.setInterval(() => {
-		if (!hayRed.value && !document.hidden) comprobar();
-	}, INTERVALO_MS);
+	timer = window.setInterval(() => {
+		if (!online.value && !document.hidden) check();
+	}, INTERVAL_MS);
 });
 
 onUnmounted(() => {
-	if (temporizador !== undefined) window.clearInterval(temporizador);
+	if (timer !== undefined) window.clearInterval(timer);
 });
 </script>
 
 <template>
   <div>
-    <PageHeader :icono="ICONO_PASO.red" :titulo="t('red.titulo')" :descripcion="t('red.intro')" />
+    <PageHeader class="mb-5" :icon="STEP_ICONS.red" icon-type="symbol" :title="t('red.titulo')" :description="t('red.intro')" />
 
-    <SectionCard>
-      <AlertMessage v-if="hayRed" tone="success" :title="t('red.conectado')">
+    <Panel>
+      <AlertMessage v-if="online" tone="success" icon="auto" :title="t('red.conectado')">
         {{ t('red.conectadoDetalle') }}
       </AlertMessage>
-      <AlertMessage v-else tone="warning" :title="t('red.desconectado')">
+      <AlertMessage v-else tone="warning" icon="auto" :title="t('red.desconectado')">
         {{ t('red.desconectadoDetalle') }}
       </AlertMessage>
 
-      <button
-        type="button"
-        :disabled="comprobando"
-        class="mt-3 rounded-corner border border-ui-border-strong px-3 py-1.5 text-sm transition-colors hover:bg-ui-surface disabled:opacity-60"
-        @click="comprobar"
-      >
-        {{ comprobando ? t('comun.cargando') : t('red.volverAProbar') }}
-      </button>
-    </SectionCard>
+      <div class="mt-3">
+        <ActionButton
+          :label="checking ? t('comun.cargando') : t('red.volverAProbar')"
+          variant="secondary"
+          :loading="checking"
+          @click="check"
+        />
+      </div>
+    </Panel>
 
     <div class="mt-4 space-y-2 text-tx-muted text-xs">
-      <p>{{ interpolar(t('red.descarga'), TAMANO_APROXIMADO) }}</p>
+      <p>{{ interpolar(t('red.descarga'), APPROXIMATE_SIZE) }}</p>
       <p>{{ t('red.cuidadoMedido') }}</p>
     </div>
   </div>

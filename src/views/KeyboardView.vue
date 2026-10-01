@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { SearchSelect, TextInput } from '@vasakgroup/vue-libvasak';
+import {
+	AlertMessage,
+	ConfigSection,
+	PageHeader,
+	SearchSelect,
+	TextInput,
+} from '@vasakgroup/vue-libvasak';
 import { computed, ref } from 'vue';
-import AlertMessage from '@/components/ui/AlertMessage.vue';
-import PageHeader from '@/components/ui/PageHeader.vue';
-import SectionCard from '@/components/ui/SectionCard.vue';
 import { useInstalacionStore } from '@/stores/instalacion';
-import { ICONO_PASO } from '@/tools/iconos';
+import { STEP_ICONS } from '@/tools/icons';
 
 const { t } = useI18n();
 const store = useInstalacionStore();
@@ -17,22 +20,22 @@ const store = useInstalacionStore();
  * No se guarda en el almacén a propósito: es un borrador, y dejarlo en el estado
  * del asistente sería llevar hasta el resumen algo que nadie eligió.
  */
-const prueba = ref('');
+const sample = ref('');
 
-const opciones = computed(() =>
-	store.catalogos.teclados.map((teclado) => ({ valor: teclado, etiqueta: teclado }))
+const options = computed(() =>
+	store.catalogos.teclados.map((layout) => ({ valor: layout, etiqueta: layout }))
 );
-const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
+const noLayouts = computed(() => store.catalogos.teclados.length === 0);
 </script>
 
 <template>
   <div>
-    <PageHeader :icono="ICONO_PASO.teclado" :titulo="t('teclado.titulo')" :descripcion="t('teclado.intro')" />
+    <PageHeader class="mb-5" :icon="STEP_ICONS.teclado" icon-type="symbol" :title="t('teclado.titulo')" :description="t('teclado.intro')" />
 
     <div class="space-y-4">
-      <SectionCard :titulo="t('teclado.distribucion')">
+      <ConfigSection :title="t('teclado.distribucion')" as="h2">
         <TextInput
-          v-if="sinTeclados"
+          v-if="noLayouts"
           v-model="store.eleccion.teclado"
           :ariaLabel="t('teclado.distribucion')"
           mono
@@ -41,15 +44,15 @@ const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
           v-else
           v-model="store.eleccion.teclado"
           :label="t('teclado.distribucion')"
-          :options="opciones"
+          :options="options"
           :search-placeholder="t('comun.buscar')"
           :empty-text="t('comun.sinResultados')"
         />
-      </SectionCard>
+      </ConfigSection>
 
-      <SectionCard :titulo="t('teclado.prueba')">
-        <TextInput v-model="prueba" :placeholder="t('teclado.pruebaPlaceholder')" />
-      </SectionCard>
+      <ConfigSection :title="t('teclado.prueba')" as="h2">
+        <TextInput v-model="sample" :placeholder="t('teclado.pruebaPlaceholder')" />
+      </ConfigSection>
 
       <!--
         Honestidad sobre lo que este campo puede y no puede probar: la
@@ -57,7 +60,7 @@ const sinTeclados = computed(() => store.catalogos.teclados.length === 0);
         está dibujando esta ventana. Sin decirlo, alguien tipea, ve que sale
         `us`, y cree que el instalador ignoró su elección.
       -->
-      <AlertMessage tone="info">{{ t('teclado.avisoNoAplica') }}</AlertMessage>
+      <AlertMessage tone="info" icon="auto">{{ t('teclado.avisoNoAplica') }}</AlertMessage>
     </div>
   </div>
 </template>

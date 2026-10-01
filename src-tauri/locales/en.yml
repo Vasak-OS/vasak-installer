@@ -21,6 +21,9 @@ ventana:
 barraLateral:
   plegar: Collapse the sidebar
   desplegar: Expand the sidebar
+  # La ventana angosta: los pasos pasan a una ficha aparte, como en un celular.
+  showSteps: "Step {0} of {1}: {2}"
+  backToStep: Back to the step
 
 comun:
   siguiente: Continue
