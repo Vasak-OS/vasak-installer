@@ -227,6 +227,21 @@ describe('el composable de iconos del molde', () => {
  * con su icono por tono y `SideButton` con `IconTile`. Una copia al lado de la
  * biblioteca que hace lo mismo es una copia que se va a separar.
  */
+/** El texto sin los comentarios de HTML, cortando por `<!--` y `-->`. */
+function withoutComments(text: string): string {
+	let out = '';
+	let index = 0;
+	while (index < text.length) {
+		const open = text.indexOf('<!--', index);
+		if (open === -1) return out + text.slice(index);
+		out += text.slice(index, open);
+		const close = text.indexOf('-->', open + 4);
+		if (close === -1) return out;
+		index = close + 3;
+	}
+	return out;
+}
+
 describe('las piezas propias', () => {
 	const FUENTE = fileURLToPath(new URL('../src/', import.meta.url));
 	const fuentes = [...new Glob('**/*.{vue,ts}').scanSync(FUENTE)];
@@ -251,8 +266,10 @@ describe('las piezas propias', () => {
 		// casilla.
 		for (const ruta of fuentes.filter((r) => r.endsWith('.vue'))) {
 			const texto = await Bun.file(join(FUENTE, ruta)).text();
-			// Sin los comentarios: varios nombran el `<select>` que había.
-			const plantilla = texto.slice(texto.indexOf('<template>')).replace(/<!--[\s\S]*?-->/g, '');
+			// Sin los comentarios: varios nombran el `<select>` que había. Se
+			// cortan por delimitadores y no con un reemplazo de expresión
+			// regular, que puede dejar un `<!--` armado con los pedazos.
+			const plantilla = withoutComments(texto.slice(texto.indexOf('<template>')));
 			expect(plantilla, ruta).not.toMatch(/<select\b|<input\b|<button\b/);
 		}
 	});
