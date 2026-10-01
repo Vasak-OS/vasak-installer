@@ -81,7 +81,9 @@ describe('la barra', () => {
 
 		const list = view.find('ol');
 		expect(list.exists()).toBe(true);
-		expect(list.attributes('aria-label')).toBeDefined();
+		// El nombre de la lista y no el del primer paso: con `pasos.bienvenida`
+		// un lector de pantalla anunciaba la lista entera como «Bienvenida».
+		expect(list.attributes('aria-label')).toBe('barraLateral.steps');
 		expect(list.findAll('li')).toHaveLength(PASOS.length);
 	});
 });

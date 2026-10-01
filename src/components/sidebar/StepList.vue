@@ -93,7 +93,7 @@ function go(step: Paso, index: number) {
 </script>
 
 <template>
-  <ol :aria-label="t('pasos.bienvenida.titulo')" class="flex flex-col gap-1">
+  <ol :aria-label="t('barraLateral.steps')" class="flex flex-col gap-1">
     <!--
       Una lista ordenada con su nombre: para un lector de pantalla esto es
       «lista de 10 elementos, elemento 5», que es exactamente la información

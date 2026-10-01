@@ -24,6 +24,7 @@ barraLateral:
   # La ventana angosta: los pasos pasan a una ficha aparte, como en un celular.
   showSteps: "Step {0} of {1}: {2}"
   backToStep: Back to the step
+  steps: Installation steps
 
 comun:
   siguiente: Continue
