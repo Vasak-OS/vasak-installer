@@ -21,6 +21,10 @@ ventana:
 barraLateral:
   plegar: Plegar la barra lateral
   desplegar: Desplegar la barra lateral
+  # La ventana angosta: los pasos pasan a una ficha aparte, como en un celular.
+  showSteps: "Paso {0} de {1}: {2}"
+  backToStep: Volver al paso
+  steps: Pasos de la instalación
 
 comun:
   siguiente: Continuar

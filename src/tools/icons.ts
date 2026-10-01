@@ -13,10 +13,9 @@
  */
 
 /** Los pasos del asistente. */
-import type { TonoDelAviso } from '@vasakgroup/vue-libvasak';
 import type { Paso } from '@/stores/instalacion';
 
-export const ICONO_PASO: Record<Paso, string> = {
+export const STEP_ICONS: Record<Paso, string> = {
 	bienvenida: 'help-about',
 	red: 'network-wireless',
 	region: 'globe',
@@ -33,7 +32,7 @@ export const ICONO_PASO: Record<Paso, string> = {
  * Los pasos de la instalación, que son los del backend (`Paso::clave()`) y no
  * los del asistente.
  */
-export const ICONO_PASO_INSTALACION: Record<string, string> = {
+export const INSTALL_STEP_ICONS: Record<string, string> = {
 	particionar: 'drive-multidisk',
 	montar: 'drive-harddisk',
 	espejos: 'network-server',
@@ -57,23 +56,16 @@ export const ICONO_PASO_INSTALACION: Record<string, string> = {
  *
  * Va acá y no escrito en la plantilla para que lo cubra el test que verifica
  * contra el tema instalado. La entrada `.desktop` nombra el mismo, pero esa
- * copia no la puede comprobar este módulo: la comprueba `iconos.test.ts`.
+ * copia no la puede comprobar este módulo: la comprueba `icons.test.ts`.
  */
-export const ICONO_APLICACION = 'system-os-installer';
+export const APP_ICON = 'system-os-installer';
 
 /**
- * La flecha del desplegable, en el selector buscable.
- *
- * `pan-down` es el nombre que GTK usa para exactamente esta flecha —la de un
- * combo o un expansor— y el tema lo tiene. Acá había un `▾` escrito a mano: un
- * carácter de texto no sigue el tema de iconos, se dibuja con la tipografía que
- * haya y cambia de forma y de peso entre una fuente y otra.
+ * La ventana angosta: el botón que abre la ficha de pasos y el que vuelve de
+ * ella. `view-list` y `go-previous` son los nombres de freedesktop.
  */
-export const ICONO_DESPLEGABLE = 'pan-down';
-
-/** Marca de paso terminado, y de paso que falló. */
-export const ICONO_HECHO = 'object-select';
-export const ICONO_FALLADO = 'dialog-error';
+export const STEP_LIST_ICON = 'view-list';
+export const BACK_ICON = 'go-previous';
 
 /**
  * El icono de un disco.
@@ -94,35 +86,21 @@ export const ICONO_FALLADO = 'dialog-error';
  * el transporte en el sondeo, y marcar como extraíble un disco interno —o al
  * revés— es la clase de error que nadie perdona acá.
  */
-export function iconoDeDisco(disco: { nvme: boolean; rotacional: boolean }): string {
-	if (disco.rotacional) return 'drive-harddisk';
+export function diskIcon(disk: { nvme: boolean; rotacional: boolean }): string {
+	if (disk.rotacional) return 'drive-harddisk';
 	// Un NVMe es un disco de estado sólido; el tema no tiene un icono propio para
 	// NVMe y `drive-harddisk-nvme` no existe.
 	return 'drive-harddisk-solidstate';
 }
 
 /** El rol de una partición en la vista previa del particionado. */
-export const ICONO_ROL_PARTICION: Record<string, string> = {
+export const PARTITION_ROLE_ICONS: Record<string, string> = {
 	esp: 'system-shutdown',
 	raiz: 'drive-harddisk',
 	// Sólo aparece en el modo manual: una partición que se monta en otro lado,
 	// como `/home`. Va con el icono de carpeta y no con el de disco, que es lo
 	// que la distingue de un vistazo de la del sistema.
 	datos: 'folder',
-};
-
-/**
- * Los mensajes, por tono.
- *
- * Las claves son las de `TonoDelAviso` de la librería y no unas propias: el
- * aviso de acá es el de la librería con su icono puesto, y dos vocabularios
- * para lo mismo obligan a traducir en el medio.
- */
-export const ICONO_MENSAJE: Record<TonoDelAviso, string> = {
-	info: 'dialog-information',
-	warning: 'dialog-warning',
-	error: 'dialog-error',
-	success: 'object-select',
 };
 
 /**
@@ -133,7 +111,7 @@ export const ICONO_MENSAJE: Record<TonoDelAviso, string> = {
  * una tarjeta de cámara. Es el mismo error que tenía el icono del disco NVMe.
  * `am-*` es el juego que usa vasak-monitor para estas mismas magnitudes.
  */
-export const ICONO_EQUIPO = {
+export const HARDWARE_ICONS = {
 	procesador: 'am-cpu',
 	memoria: 'am-memory',
 	firmware: 'preferences-system-details',
@@ -141,19 +119,17 @@ export const ICONO_EQUIPO = {
 } as const;
 
 /** Todo lo de este módulo, para el test que verifica que el tema los tenga. */
-export function todosLosIconos(): string[] {
+export function allIcons(): string[] {
 	return [
-		...Object.values(ICONO_PASO),
-		...Object.values(ICONO_PASO_INSTALACION),
-		...Object.values(ICONO_ROL_PARTICION),
-		...Object.values(ICONO_MENSAJE),
-		...Object.values(ICONO_EQUIPO),
-		ICONO_HECHO,
-		ICONO_FALLADO,
-		ICONO_APLICACION,
-		ICONO_DESPLEGABLE,
-		iconoDeDisco({ nvme: true, rotacional: false }),
-		iconoDeDisco({ nvme: false, rotacional: true }),
-		iconoDeDisco({ nvme: false, rotacional: false }),
+		...Object.values(STEP_ICONS),
+		...Object.values(INSTALL_STEP_ICONS),
+		...Object.values(PARTITION_ROLE_ICONS),
+		...Object.values(HARDWARE_ICONS),
+		APP_ICON,
+		STEP_LIST_ICON,
+		BACK_ICON,
+		diskIcon({ nvme: true, rotacional: false }),
+		diskIcon({ nvme: false, rotacional: true }),
+		diskIcon({ nvme: false, rotacional: false }),
 	];
 }

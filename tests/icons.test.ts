@@ -21,7 +21,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { PASOS } from '../src/stores/instalacion';
-import { ICONO_APLICACION, ICONO_PASO, iconoDeDisco, todosLosIconos } from '../src/tools/iconos';
+import { APP_ICON, allIcons, diskIcon, STEP_ICONS } from '../src/tools/icons';
 
 /**
  * Dónde busca GTK, en el orden en que hereda el tema.
@@ -155,7 +155,7 @@ describe('los iconos que nombra el instalador', () => {
 	});
 
 	test.skipIf(!hayTema)('todos existen en el tema', () => {
-		expect(todosLosIconos().filter((nombre) => !existe(nombre))).toEqual([]);
+		expect(allIcons().filter((nombre) => !existe(nombre))).toEqual([]);
 	});
 
 	test('cada paso del asistente tiene su icono', () => {
@@ -163,14 +163,14 @@ describe('los iconos que nombra el instalador', () => {
 		// vacío, y la barra pierde justamente lo que la hace legible de un
 		// vistazo.
 		for (const paso of PASOS) {
-			expect(ICONO_PASO[paso]).toBeTruthy();
+			expect(STEP_ICONS[paso]).toBeTruthy();
 		}
 	});
 
 	test('ningún nombre lleva el sufijo -symbolic', () => {
 		// Lo agrega el plugin. Escribirlo a mano da `foo-symbolic-symbolic`, que
 		// no resuelve y deja el hueco vacío sin decir nada.
-		for (const nombre of todosLosIconos()) {
+		for (const nombre of allIcons()) {
 			expect(nombre.endsWith('-symbolic')).toBe(false);
 		}
 	});
@@ -215,7 +215,7 @@ describe('los iconos que nombra el instalador', () => {
 	 * como símbolo, también cae en `image-missing`.
 	 */
 	test.skipIf(!hayTema)('los iconos de los pasos existen en versión simbólica', () => {
-		const sinSimbolo = Object.values(ICONO_PASO).filter((n) => !hayVersionSimbolica(n));
+		const sinSimbolo = Object.values(STEP_ICONS).filter((n) => !hayVersionSimbolica(n));
 		expect(sinSimbolo).toEqual([]);
 	});
 
@@ -233,9 +233,9 @@ describe('los iconos que nombra el instalador', () => {
 	 * de imagen rota.
 	 */
 	test('cada tipo de disco usa el icono que le corresponde', () => {
-		expect(iconoDeDisco({ nvme: false, rotacional: true })).toBe('drive-harddisk');
-		expect(iconoDeDisco({ nvme: true, rotacional: false })).toBe('drive-harddisk-solidstate');
-		expect(iconoDeDisco({ nvme: false, rotacional: false })).toBe('drive-harddisk-solidstate');
+		expect(diskIcon({ nvme: false, rotacional: true })).toBe('drive-harddisk');
+		expect(diskIcon({ nvme: true, rotacional: false })).toBe('drive-harddisk-solidstate');
+		expect(diskIcon({ nvme: false, rotacional: false })).toBe('drive-harddisk-solidstate');
 
 		// Y los dos nombres tienen que existir a color de verdad, que es como se
 		// dibujan las tarjetas de disco.
@@ -257,20 +257,20 @@ describe('los iconos que nombra el instalador', () => {
 		const entrada = readFileSync('src-tauri/packaging/vasak-installer.desktop', 'utf8');
 		const linea = entrada.split('\n').find((l) => l.startsWith('Icon='));
 
-		expect(linea).toBe(`Icon=${ICONO_APLICACION}`);
+		expect(linea).toBe(`Icon=${APP_ICON}`);
 	});
 
 	test.skipIf(!hayTema)('el icono de la aplicación existe a color en el tema', () => {
 		// Va a color y no simbólico: es la identidad de la aplicación, no una
 		// marca de estado. Pedirlo a color sin que exista devuelve `image-missing`.
-		expect(hayVersionAColor(ICONO_APLICACION)).toBe(true);
+		expect(hayVersionAColor(APP_ICON)).toBe(true);
 	});
 
 	test('ningún nombre lleva extensión ni ruta', () => {
 		// El plugin acepta rutas absolutas —tiene un cerco para eso— así que un
 		// nombre con `/` no falla, resuelve otra cosa. Y con `.svg` no resuelve
 		// nada.
-		for (const nombre of todosLosIconos()) {
+		for (const nombre of allIcons()) {
 			expect(nombre).not.toContain('/');
 			expect(nombre).not.toContain('.');
 		}

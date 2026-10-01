@@ -24,9 +24,9 @@ import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
-import AlertMessage from '@/components/ui/AlertMessage.vue';
-import InstalacionView from '@/views/InstalacionView.vue';
+import { AlertMessage } from '@vasakgroup/vue-libvasak';
 import { useInstalacionStore } from '@/stores/instalacion';
+import InstallationView from '@/views/InstallationView.vue';
 import { olvidarTodo, ponerEnElTema } from './dobles';
 
 beforeEach(() => {
@@ -40,10 +40,29 @@ beforeEach(() => {
 });
 
 describe('el aviso', () => {
-	test('cada tono trae su icono, que es lo único que el instalador agrega', async () => {
+	const FUENTE = fileURLToPath(new URL('../src/', import.meta.url));
+	const fuentes = [...new Glob('**/*.vue').scanSync(FUENTE)];
+
+	test('es el de la librería con el icono de su tono, que es lo único que el instalador agrega', async () => {
 		// De las seis copias de aviso del sistema, la de acá era la única con
 		// icono: un aviso que dice que se va a borrar un disco tiene que hacerse
-		// mirar. El color y el rol los pone la librería.
+		// mirar. La capa propia que lo ponía se fue: la librería trae el icono
+		// por tono con `icon="auto"`, así que cada aviso tiene que pedirlo.
+		const sinIcono: string[] = [];
+		let avisos = 0;
+		for (const ruta of fuentes) {
+			const texto = await Bun.file(join(FUENTE, ruta)).text();
+			for (const [etiqueta] of texto.matchAll(/<AlertMessage\b[^>]*>/gs)) {
+				avisos++;
+				if (!etiqueta.includes('icon="auto"')) sinIcono.push(`${ruta}: ${etiqueta.replace(/\s+/g, ' ')}`);
+			}
+		}
+
+		expect(avisos).toBeGreaterThan(20);
+		expect(sinIcono).toEqual([]);
+	});
+
+	test('y con `auto` dibuja el de cada tono', async () => {
 		for (const [tone, icono] of [
 			['error', 'dialog-error'],
 			['warning', 'dialog-warning'],
@@ -53,7 +72,7 @@ describe('el aviso', () => {
 			olvidarTodo();
 			olvidarLosIconosDelTema();
 			ponerEnElTema(icono, `fuente-de-${icono}`);
-			const vista = mount(AlertMessage, { props: { tone }, slots: { default: 'x' } });
+			const vista = mount(AlertMessage, { props: { tone, icon: 'auto' }, slots: { default: 'x' } });
 			await nextTick();
 			await new Promise((listo) => setTimeout(listo, 0));
 
@@ -63,7 +82,6 @@ describe('el aviso', () => {
 	});
 
 	test('y el rol lo sigue poniendo la librería: el error interrumpe', () => {
-		// Es lo que se perdería si esto volviera a ser un componente propio.
 		const error = mount(AlertMessage, { props: { tone: 'error' }, slots: { default: 'x' } });
 		const aviso = mount(AlertMessage, { props: { tone: 'warning' }, slots: { default: 'x' } });
 
@@ -76,7 +94,7 @@ describe('la barra de progreso, que cambió de unidad', () => {
 	/**
 	 * Las vistas montadas, para desmontarlas pase lo que pase.
 	 *
-	 * `InstalacionView` arranca un `setInterval` al montarse —el reloj de
+	 * `InstallationView` arranca un `setInterval` al montarse —el reloj de
 	 * «transcurrido»— y lo limpia al desmontarse. Sin esto, cada prueba deja un
 	 * temporizador vivo corriendo contra una vista que ya nadie mira, y una
 	 * aserción que falle se saltea el desmontaje del final.
@@ -97,7 +115,7 @@ describe('la barra de progreso, que cambió de unidad', () => {
 			mapa.set(`paso${i}`, { paso: `paso${i}`, estado, fraccion: estado === 'en_curso' ? parcial : null, detalle: null });
 		}
 		store.progreso = mapa;
-		const vista = mount(InstalacionView);
+		const vista = mount(InstallationView);
 		vistas.add(vista);
 		return vista;
 	}
@@ -200,60 +218,59 @@ describe('el composable de iconos del molde', () => {
 });
 
 /**
- * El icono del sistema, que ahora es una capa fina y no una implementación.
+ * Las piezas dibujadas a mano que ya son de la librería (vue-libvasak#74).
  *
- * `useIcono` + `IconoSistema` eran una copia de `ThemeIcon` que **sabía menos**:
- * armaba su oyente una sola vez y nunca lo soltaba, y una resolución que volvía
- * después de un cambio de tema se memorizaba igual, así que quedaba guardado el
- * icono del tema anterior hasta el próximo cambio. La librería lleva cuenta de
- * suscriptores y mete la versión del tema en la clave del pedido en vuelo.
- *
- * El motivo por el que la copia existía —que `ThemeIcon` resolvía uno por
- * instancia, y acá se dibujan cerca de cuarenta al arrancar— dejó de ser cierto
- * hace varias versiones.
+ * `PageHeader`, `SectionCard`, `OpcionRadio`, `SystemIcon`, `AlertMessage` y
+ * `PasoBoton` eran copias de lo que la librería ya tiene: la cabecera con el
+ * icono, la tarjeta de sección (`ConfigSection`, o `Panel` sin título), el grupo
+ * de opciones en tarjeta (`OptionGroup variant="card"`), `ThemeIcon`, el aviso
+ * con su icono por tono y `SideButton` con `IconTile`. Una copia al lado de la
+ * biblioteca que hace lo mismo es una copia que se va a separar.
  */
-describe('el icono del sistema', () => {
+/** El texto sin los comentarios de HTML, cortando por `<!--` y `-->`. */
+function withoutComments(text: string): string {
+	let out = '';
+	let index = 0;
+	while (index < text.length) {
+		const open = text.indexOf('<!--', index);
+		if (open === -1) return out + text.slice(index);
+		out += text.slice(index, open);
+		const close = text.indexOf('-->', open + 4);
+		if (close === -1) return out;
+		index = close + 3;
+	}
+	return out;
+}
+
+describe('las piezas propias', () => {
 	const FUENTE = fileURLToPath(new URL('../src/', import.meta.url));
-	const leer = (ruta: string) => Bun.file(join(FUENTE, ruta)).text();
+	const fuentes = [...new Glob('**/*.{vue,ts}').scanSync(FUENTE)];
 
-	test('se llama en inglés y dibuja con la librería', async () => {
-		const texto = await leer('components/ui/SystemIcon.vue');
-
-		expect(texto).toContain("import { ThemeIcon } from '@vasakgroup/vue-libvasak'");
-		expect(texto).toMatch(/<ThemeIcon\b/);
+	test('ya no están', () => {
+		const viejas = ['PageHeader', 'SectionCard', 'OpcionRadio', 'SystemIcon', 'AlertMessage', 'PasoBoton', 'PasosSidebar'];
+		expect(fuentes.filter((ruta) => viejas.some((nombre) => ruta.endsWith(`/${nombre}.vue`)))).toEqual([]);
+		expect(fuentes.filter((ruta) => ruta.startsWith('components/ui/'))).toEqual([]);
 	});
 
-	test('el tamaño lo ponen las clases, no un número', async () => {
-		// Con un número, `ThemeIcon` escribe el alto y el ancho en línea y le
-		// gana a la clase: el `size-4` de acá no haría nada.
-		const texto = await leer('components/ui/SystemIcon.vue');
-
-		expect(texto).toContain('size="auto"');
-		expect(texto).not.toMatch(/<ThemeIcon[^>]*\s:?size="\d/s);
-	});
-
-	test('sigue siendo decorativo', async () => {
-		// Un icono al lado de un texto que dice lo mismo, leído en voz alta, es
-		// el texto dos veces.
-		const texto = await leer('components/ui/SystemIcon.vue');
-
-		expect(texto).toContain('alt=""');
-		// Va por `v-bind` y no como atributo suelto: `ThemeIcon` declara sus
-		// propiedades y `strictTemplates` rechaza lo que no esté en esa lista,
-		// aunque el atributo llegue igual por `$attrs`.
-		expect(texto).toContain("'aria-hidden': 'true'");
-	});
-
-	test('no quedó nada del par viejo', async () => {
-		const fuentes = [...new Glob('**/*.{vue,ts}').scanSync(FUENTE)];
-
-		expect(fuentes.filter((r) => r.includes('IconoSistema') || r.includes('useIcono'))).toEqual(
-			[]
-		);
+	test('y nadie las importa por su nombre viejo', async () => {
 		for (const ruta of fuentes) {
-			const texto = await leer(ruta);
-			expect(texto).not.toContain('IconoSistema');
-			expect(texto).not.toContain('useIcono');
+			const texto = await Bun.file(join(FUENTE, ruta)).text();
+			expect(texto, ruta).not.toContain("from '@/components/ui/");
+			expect(texto, ruta).not.toMatch(/<(?:SectionCard|OpcionRadio|SystemIcon|PasoBoton)\b/);
+		}
+	});
+
+	test('ni quedó un control nativo dibujado a mano', async () => {
+		// El `<select>` y la casilla del modo manual eran nativos con clases
+		// propias; ahora son `SelectField` y `Checkbox`. Casilla donde había
+		// casilla.
+		for (const ruta of fuentes.filter((r) => r.endsWith('.vue'))) {
+			const texto = await Bun.file(join(FUENTE, ruta)).text();
+			// Sin los comentarios: varios nombran el `<select>` que había. Se
+			// cortan por delimitadores y no con un reemplazo de expresión
+			// regular, que puede dejar un `<!--` armado con los pedazos.
+			const plantilla = withoutComments(texto.slice(texto.indexOf('<template>')));
+			expect(plantilla, ruta).not.toMatch(/<select\b|<input\b|<button\b/);
 		}
 	});
 });

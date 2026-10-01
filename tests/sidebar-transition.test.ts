@@ -19,10 +19,10 @@
 import { describe, expect, test } from 'bun:test';
 import { SideBar } from '@vasakgroup/vue-libvasak';
 import { mount } from '@vue/test-utils';
-import PasosSidebar from '@/components/sidebar/PasosSidebar.vue';
+import StepsSidebar from '@/components/sidebar/StepsSidebar.vue';
 
 function mountSidebar() {
-	return mount(PasosSidebar, { props: { actual: 'teclado' as const, navegable: true } });
+	return mount(StepsSidebar, { props: { current: 'teclado' as const, navigable: true } });
 }
 
 describe('la barra lateral del instalador', () => {
