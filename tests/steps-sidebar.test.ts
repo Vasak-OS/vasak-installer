@@ -247,7 +247,7 @@ describe('la ventana angosta: una columna por vez', () => {
 		const sheet = view.find('[data-steps-sheet]');
 		const region = sheet
 			.findAllComponents(SideButton)
-			.find((button: VueWrapper) => button.props('label') === 'pasos.region.titulo');
+			.find((button: { props: () => unknown }) => (button.props() as { label?: string }).label === 'pasos.region.titulo');
 		await region?.find('button').trigger('click');
 		await flushPromises();
 
