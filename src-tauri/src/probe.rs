@@ -80,7 +80,10 @@ pub fn cpu() -> (String, usize) {
     // Se cuentan los `processor:`, que son los hilos que ve el kernel. `cpu
     // cores` daría núcleos físicos, que es otro número y no el que importa para
     // decidir cuántas descargas paralelas aguanta.
-    let hilos = contenido.lines().filter(|l| l.starts_with("processor")).count();
+    let hilos = contenido
+        .lines()
+        .filter(|l| l.starts_with("processor"))
+        .count();
     (modelo, hilos)
 }
 
@@ -447,8 +450,16 @@ fn zonas_recorriendo_el_arbol() -> Vec<String> {
     // Sólo las regiones reales. `posix` y `right` son copias del mismo árbol con
     // otra interpretación de los segundos intercalares, y `SystemV` son alias.
     const REGIONES: &[&str] = &[
-        "Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Europe",
-        "Indian", "Pacific",
+        "Africa",
+        "America",
+        "Antarctica",
+        "Arctic",
+        "Asia",
+        "Atlantic",
+        "Australia",
+        "Europe",
+        "Indian",
+        "Pacific",
     ];
     let mut zonas = BTreeSet::new();
     for region in REGIONES {
@@ -715,6 +726,112 @@ mod tests {
         let _ = modelo;
     }
 
+    /// Lo que tiene que cumplir un disco que salió del sondeo para que el plan
+    /// de particionado pueda confiar en él.
+    ///
+    /// Separado de `lsblk_se_parsea_en_este_equipo` para que las mismas
+    /// comprobaciones corran también contra salidas de `lsblk` escritas a mano:
+    /// contra el disco de quien corre las pruebas, un caso como la partición
+    /// reservada de Windows en el sector 34 sólo aparece si esa persona tiene
+    /// un Windows instalado.
+    fn validar_disco_sondeado(d: &Disco) -> Result<(), String> {
+        if !d.ruta.starts_with("/dev/") {
+            return Err(format!("ruta rara: {}", d.ruta));
+        }
+        if d.tamano_bytes == 0 {
+            return Err(format!("{} informó tamaño cero", d.ruta));
+        }
+        if d.sector_logico != 512 && d.sector_logico != 4096 {
+            return Err(format!("{} informó sector {}", d.ruta, d.sector_logico));
+        }
+        if d.modelo.is_empty() {
+            return Err(format!("{} salió sin modelo", d.ruta));
+        }
+
+        // Los campos nuevos, que son los que el particionado no destructivo
+        // usa para encontrar los huecos. Un `START` que no llegue —porque
+        // alguna versión de `lsblk` no lo tenga, o porque se escriba mal el
+        // nombre de la columna— daría cero, y cero significa «empieza en el
+        // sector 0», que es donde está la tabla de particiones. El plan
+        // creería que todo el disco está libre.
+        for p in &d.particiones {
+            if p.inicio_bytes == 0 {
+                return Err(format!("{}: sin desplazamiento de inicio", p.ruta));
+            }
+            // No en el sector 0, que es la tabla (el MBR, o el MBR
+            // protector de un GPT). Exigir 1 MiB, como antes, era suponer
+            // que todo disco está alineado: Windows crea su partición
+            // reservada (MSR) en el sector 34, el primero utilizable de un
+            // GPT, y en un equipo con un disco así la prueba fallaba sin
+            // que el código hiciera nada mal. Que dos particiones no se
+            // pisen y que no pasen del disco lo miran las comprobaciones
+            // de abajo.
+            if p.inicio_bytes < d.sector_logico {
+                return Err(format!(
+                    "{}: empieza en {} bytes, encima de la tabla",
+                    p.ruta, p.inicio_bytes
+                ));
+            }
+            if p.fin_bytes() > d.tamano_bytes {
+                return Err(format!(
+                    "{}: termina en {} y el disco tiene {}",
+                    p.ruta,
+                    p.fin_bytes(),
+                    d.tamano_bytes
+                ));
+            }
+            if !p.numero.is_some_and(|n| n > 0) {
+                return Err(format!("{}: sin número", p.ruta));
+            }
+        }
+
+        // Las particiones no se pisan entre sí. Si se pisaran, el error
+        // estaría en cómo se leyó `START` —convertir con el sector lógico
+        // en vez de con 512 da justo esto en un disco 4Kn— y no en el
+        // disco.
+        let mut ordenadas: Vec<_> = d.particiones.iter().collect();
+        ordenadas.sort_by_key(|p| p.inicio_bytes);
+        for par in ordenadas.windows(2) {
+            if par[0].fin_bytes() > par[1].inicio_bytes {
+                return Err(format!(
+                    "{} termina en {} y {} empieza en {}",
+                    par[0].ruta,
+                    par[0].fin_bytes(),
+                    par[1].ruta,
+                    par[1].inicio_bytes
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Un disco GPT de 500 GiB con las particiones dadas como
+    /// `(número, START en sectores de 512 o null, tamaño en bytes)`, en la
+    /// forma plana que da `lsblk --json` sin `--tree`, pasado por el mismo
+    /// camino que la salida real.
+    fn disco_desde_lsblk(particiones: &[(u32, Option<u64>, u64)]) -> Disco {
+        let mut nodos = vec![serde_json::json!({
+            "path": "/dev/sda", "pkname": null, "type": "disk",
+            "size": 500u64 * 1024 * 1024 * 1024, "model": "Prueba", "rota": false,
+            "log-sec": 512, "fstype": null, "label": null,
+            "mountpoints": [null], "start": null, "partn": null, "parttype": null
+        })];
+        for (numero, inicio, tamano) in particiones {
+            nodos.push(serde_json::json!({
+                "path": format!("/dev/sda{numero}"), "pkname": "sda", "type": "part",
+                "size": tamano, "model": null, "rota": false,
+                "log-sec": 512, "fstype": null, "label": null,
+                "mountpoints": [null], "start": inicio, "partn": numero,
+                "parttype": null
+            }));
+        }
+        let json = serde_json::json!({ "blockdevices": nodos });
+        let parseada: SalidaLsblk = serde_json::from_value(json).unwrap();
+        let mut discos = discos_desde(&parseada);
+        assert_eq!(discos.len(), 1);
+        discos.remove(0)
+    }
+
     /// Contra el `lsblk` de verdad: la estructura de deserialización tiene que
     /// coincidir con los nombres que devuelve la versión instalada. Cuando
     /// `mountpoints` pasó de cadena a lista, esto es lo que lo habría agarrado.
@@ -728,63 +845,63 @@ mod tests {
             return;
         };
         for d in &discos {
-            assert!(d.ruta.starts_with("/dev/"), "ruta rara: {}", d.ruta);
-            assert!(d.tamano_bytes > 0, "{} informó tamaño cero", d.ruta);
-            assert!(
-                d.sector_logico == 512 || d.sector_logico == 4096,
-                "{} informó sector {}",
-                d.ruta,
-                d.sector_logico
-            );
-            assert!(!d.modelo.is_empty(), "{} salió sin modelo", d.ruta);
-
-            // Los campos nuevos, que son los que el particionado no destructivo
-            // usa para encontrar los huecos. Un `START` que no llegue —porque
-            // alguna versión de `lsblk` no lo tenga, o porque se escriba mal el
-            // nombre de la columna— daría cero, y cero significa «empieza en el
-            // sector 0», que es donde está la tabla de particiones. El plan
-            // creería que todo el disco está libre.
-            for p in &d.particiones {
-                assert!(
-                    p.inicio_bytes > 0,
-                    "{}: sin desplazamiento de inicio",
-                    p.ruta
-                );
-                // 1 MiB es donde arranca la primera partición de cualquier
-                // tabla alineada, y el hueco del MBR en las que no lo están.
-                assert!(
-                    p.inicio_bytes >= 1024 * 1024,
-                    "{}: empieza en {} bytes, encima de la tabla",
-                    p.ruta,
-                    p.inicio_bytes
-                );
-                assert!(
-                    p.fin_bytes() <= d.tamano_bytes,
-                    "{}: termina en {} y el disco tiene {}",
-                    p.ruta,
-                    p.fin_bytes(),
-                    d.tamano_bytes
-                );
-                assert!(p.numero.is_some_and(|n| n > 0), "{}: sin número", p.ruta);
-            }
-
-            // Las particiones no se pisan entre sí. Si se pisaran, el error
-            // estaría en cómo se leyó `START` —convertir con el sector lógico
-            // en vez de con 512 da justo esto en un disco 4Kn— y no en el
-            // disco.
-            let mut ordenadas: Vec<_> = d.particiones.iter().collect();
-            ordenadas.sort_by_key(|p| p.inicio_bytes);
-            for par in ordenadas.windows(2) {
-                assert!(
-                    par[0].fin_bytes() <= par[1].inicio_bytes,
-                    "{} termina en {} y {} empieza en {}",
-                    par[0].ruta,
-                    par[0].fin_bytes(),
-                    par[1].ruta,
-                    par[1].inicio_bytes
-                );
+            if let Err(e) = validar_disco_sondeado(d) {
+                panic!("{e}");
             }
         }
+    }
+
+    /// **La partición reservada de Windows en el sector 34 es válida.**
+    ///
+    /// Es el disco con el que `makepkg` falló en `check()`: Windows crea la
+    /// MSR (16 MiB) en el sector 34, el primero utilizable de un GPT, sin
+    /// alinear a 1 MiB. 34 × 512 = 17408 bytes, que es lo que el sondeo lee
+    /// bien; la comprobación que exigía 1 MiB lo daba por roto.
+    #[test]
+    fn un_disco_gpt_con_la_msr_de_windows_en_el_sector_34_se_acepta() {
+        // Los números del disco real: la MSR ocupa justo hasta 16 MiB, donde
+        // empieza la siguiente partición, ya alineada.
+        let d = disco_desde_lsblk(&[
+            (1, Some(34), 16 * 1024 * 1024 - 34 * 512),
+            (2, Some(32768), 100 * 1024 * 1024 * 1024),
+        ]);
+        assert_eq!(d.particiones[0].inicio_bytes, 17408);
+        assert_eq!(validar_disco_sondeado(&d), Ok(()));
+    }
+
+    /// **Una partición sin `START` no se da por buena.**
+    ///
+    /// Si la columna no llega —una versión de `lsblk` sin ella, o el nombre
+    /// mal escrito— el sondeo la deja en 0, y 0 es el sector de la tabla: el
+    /// plan creería que el disco entero está libre y escribiría encima.
+    #[test]
+    fn una_particion_sin_inicio_se_rechaza() {
+        for inicio in [None, Some(0)] {
+            let d = disco_desde_lsblk(&[(1, inicio, 512 * 1024 * 1024)]);
+            assert_eq!(d.particiones[0].inicio_bytes, 0);
+            let error = validar_disco_sondeado(&d)
+                .expect_err("una partición que empieza en el byte 0 pasó la validación");
+            assert!(error.contains("/dev/sda1"), "{error}");
+        }
+    }
+
+    /// **Dos particiones que se pisan no se dan por buenas.**
+    ///
+    /// Es lo que se ve cuando `START` se convierte con la unidad equivocada, y
+    /// el plan pondría una partición nueva encima de datos ajenos.
+    #[test]
+    fn dos_particiones_que_se_pisan_se_rechazan() {
+        let d = disco_desde_lsblk(&[
+            (1, Some(2048), 1024 * 1024 * 1024),
+            // Empieza en 2 MiB, dentro de la primera, que llega a 1 GiB + 1 MiB.
+            (2, Some(4096), 1024 * 1024 * 1024),
+        ]);
+        let error = validar_disco_sondeado(&d)
+            .expect_err("dos particiones superpuestas pasaron la validación");
+        assert!(
+            error.contains("/dev/sda1") && error.contains("/dev/sda2"),
+            "{error}"
+        );
     }
 
     /// **En un disco 4Kn el desplazamiento no se convierte con el sector
