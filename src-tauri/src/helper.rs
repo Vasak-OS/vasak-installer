@@ -25,8 +25,8 @@
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
 use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc;
@@ -110,7 +110,13 @@ fn log(salida: &Salida, nivel: Nivel, linea: impl Into<String>) {
     );
 }
 
-fn progreso(salida: &Salida, paso: Paso, estado: EstadoPaso, fraccion: Option<f32>, detalle: Option<String>) {
+fn progreso(
+    salida: &Salida,
+    paso: Paso,
+    estado: EstadoPaso,
+    fraccion: Option<f32>,
+    detalle: Option<String>,
+) {
     emitir(
         salida,
         &Mensaje::Progress(Progreso {
@@ -212,7 +218,13 @@ pub fn run() -> ! {
                 );
                 let resultado = instalar(&salida, &grupo, &cancelado, &plan);
                 match resultado {
-                    Ok(()) => emitir(&salida, &Mensaje::Done { ok: true, error: None }),
+                    Ok(()) => emitir(
+                        &salida,
+                        &Mensaje::Done {
+                            ok: true,
+                            error: None,
+                        },
+                    ),
                     Err(e) => {
                         log(&salida, Nivel::Error, e.clone());
                         emitir(
@@ -444,18 +456,21 @@ fn instalar(
         return Err("se pidió cifrado pero no hay frase".into());
     }
 
-    let ruta_paquetes = archconfig::ruta_paquetes()
-        .ok_or_else(|| "no se encontró paquetes.txt".to_string())?;
+    let ruta_paquetes =
+        archconfig::ruta_paquetes().ok_or_else(|| "no se encontró paquetes.txt".to_string())?;
     let paquetes = archconfig::leer_paquetes(
         &std::fs::read_to_string(&ruta_paquetes)
             .map_err(|e| format!("no se pudo leer {}: {e}", ruta_paquetes.display()))?,
     );
     if paquetes.is_empty() {
-        return Err(format!("{} no tiene ningún paquete", ruta_paquetes.display()));
+        return Err(format!(
+            "{} no tiene ningún paquete",
+            ruta_paquetes.display()
+        ));
     }
 
-    let ruta_plugin =
-        archconfig::ruta_plugin().ok_or_else(|| "no se encontró el plugin de archinstall".to_string())?;
+    let ruta_plugin = archconfig::ruta_plugin()
+        .ok_or_else(|| "no se encontró el plugin de archinstall".to_string())?;
 
     // Los complementos elegidos → los paquetes y servicios que suman.
     //
@@ -478,10 +493,11 @@ fn instalar(
         }
     };
     // Los paquetes que necesita **esta** máquina y que no van en el metapaquete:
-    // el controlador de vídeo de su fabricante, el firmware de su audio, bluez
-    // si tiene adaptador. Se detecta acá, en el medio vivo, que es el único lugar
-    // donde se puede ver qué ató el kernel — la ISO trae el firmware de todo, así
-    // que lo que anduvo acá es lo que la máquina necesita.
+    // el controlador de vídeo de su fabricante, el firmware de su audio, la base
+    // de regulaciones si tiene inalámbrica. Se detecta acá, en el medio vivo, que
+    // es el único lugar donde se puede ver qué ató el kernel — la ISO trae el
+    // firmware de todo, así que lo que anduvo acá es lo que la máquina necesita.
+    // (Bluetooth ya no sale de acá: bluez viene de fábrica en el metapaquete.)
     let hw = crate::hardware::detectar();
     let mut necesarios = crate::hardware::necesarios(&hw);
     // Y las fuentes del idioma elegido, por la misma razón que los
@@ -491,14 +507,23 @@ fn instalar(
         necesarios.paquetes.insert(fuente.to_string());
     }
     if necesarios.paquetes.is_empty() {
-        log(salida, Nivel::Info, "no se detectó hardware que necesite paquetes propios");
+        log(
+            salida,
+            Nivel::Info,
+            "no se detectó hardware que necesite paquetes propios",
+        );
     } else {
         log(
             salida,
             Nivel::Info,
             format!(
                 "para este equipo: {} ({})",
-                necesarios.paquetes.iter().cloned().collect::<Vec<_>>().join(", "),
+                necesarios
+                    .paquetes
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 hw.marcas.iter().cloned().collect::<Vec<_>>().join(" ")
             ),
         );
@@ -518,8 +543,11 @@ fn instalar(
         .map_err(|e| format!("no se pudo crear {DIR_TRABAJO}: {e}"))?;
     // 0700 explícito: `create_dir_all` respeta el umask, y con un umask permisivo
     // el directorio que contiene las credenciales quedaría legible.
-    std::fs::set_permissions(DIR_TRABAJO, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-        .map_err(|e| format!("no se pudieron ajustar los permisos de {DIR_TRABAJO}: {e}"))?;
+    std::fs::set_permissions(
+        DIR_TRABAJO,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .map_err(|e| format!("no se pudieron ajustar los permisos de {DIR_TRABAJO}: {e}"))?;
 
     let dir = PathBuf::from(DIR_TRABAJO);
     let ruta_config = dir.join("configuracion.json");
@@ -601,7 +629,10 @@ fn instalar(
     log(
         salida,
         Nivel::Info,
-        format!("comprobando que los {} paquetes se puedan instalar juntos…", finales.len()),
+        format!(
+            "comprobando que los {} paquetes se puedan instalar juntos…",
+            finales.len()
+        ),
     );
     let vigilancia = conflictos::Vigilancia {
         // Con tope y no a ciegas: con un espejo lento o una conexión que se
@@ -881,7 +912,8 @@ mod tests {
     /// entrar en un sistema que por lo demás se instaló bien.
     #[test]
     fn el_hash_sale_con_formato_sha512() {
-        let hash = hashear("una contraseña con espacios y acentós").expect("openssl tendría que andar");
+        let hash =
+            hashear("una contraseña con espacios y acentós").expect("openssl tendría que andar");
         assert!(hash.starts_with("$6$"), "salió «{hash}»");
         // `$6$` + sal + `$` + hash. Más corto que esto significa que openssl
         // devolvió otra cosa.
@@ -1006,7 +1038,10 @@ mod tests {
         let salida: Salida = Arc::new(Mutex::new(std::io::stdout()));
 
         cancelar(&salida, &grupo, &cancelado);
-        assert!(cancelado.load(Ordering::SeqCst), "no se marcó la cancelación");
+        assert!(
+            cancelado.load(Ordering::SeqCst),
+            "no se marcó la cancelación"
+        );
 
         let _ = hijo.wait();
 
@@ -1040,7 +1075,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(!vive, "el nieto {nieto} sobrevivió a la cancelación del grupo");
+        assert!(
+            !vive,
+            "el nieto {nieto} sobrevivió a la cancelación del grupo"
+        );
     }
 
     /// Cancelar cuando no hay nada corriendo no puede mandar ninguna señal.
