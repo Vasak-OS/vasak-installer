@@ -1159,6 +1159,48 @@ zsh";
     }
 
     #[test]
+    fn el_bluetooth_se_habilita_siempre_aunque_no_haya_hardware_ni_complementos() {
+        // La decisión de producto es que el Bluetooth venga de fábrica: su unidad
+        // tiene que salir habilitada en el JSON que recibe archinstall en **toda**
+        // instalación, sin depender de que la máquina tenga un adaptador ni de que
+        // el usuario haya elegido ningún complemento. Por eso se arma el caso más
+        // pelado posible —`aporte` vacío y `necesarios` por defecto, es decir
+        // ningún servicio detectado por hardware— y aun así `bluetooth` tiene que
+        // estar en `services`.
+        //
+        // Sin el arreglo (bluetooth fuera de `SERVICIOS` y aportado sólo por el
+        // hardware) este caso no lo incluye, que es exactamente la regresión que
+        // dejaba un equipo recién instalado sin Bluetooth.
+        let d = disco();
+        let particiones =
+            planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let mut p = plan(false);
+        p.complementos.clear();
+        let c = configuracion(
+            &p,
+            &particiones,
+            d.sector_logico,
+            Firmware::Uefi,
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string(), "vasakos-desktop".to_string()],
+                aporte: &Aporte::default(),
+                necesarios: &Default::default(),
+            },
+            Some("4.4.0"),
+        );
+        let servicios: Vec<&str> = c["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert!(
+            servicios.contains(&"bluetooth"),
+            "el Bluetooth tiene que venir habilitado de fábrica: {servicios:?}"
+        );
+    }
+
+    #[test]
     fn la_lista_fija_no_habilita_servicios_de_paquetes_condicionales() {
         // Un servicio de esta lista se habilita en **toda** instalación, y
         // `enable_service` de archinstall lanza `ServiceException` si la unidad
