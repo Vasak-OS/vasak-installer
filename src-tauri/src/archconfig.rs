@@ -53,12 +53,14 @@ const SERVICIOS: &[&str] = &[
     // la instalación parezca haber funcionado.
     "greetd",
     "NetworkManager",
-    // `bluetooth` **no** está acá, y sacarlo fue un arreglo y no una limpieza:
-    // el paquete que trae esa unidad lo instala el instalador sólo si detecta un
-    // adaptador, así que en un equipo sin Bluetooth `systemctl enable bluetooth`
-    // no encuentra nada y archinstall lanza `ServiceException` — o sea, la
-    // instalación aborta con el disco ya formateado. Lo aporta
-    // `hardware::necesarios`, junto con su paquete.
+    // `bluetooth` va fijo: `bluez` lo arrastra siempre el metapaquete
+    // `vasakos-desktop`, así que la unidad existe en toda instalación y
+    // `systemctl enable bluetooth` nunca se queda sin nada que habilitar. Estuvo
+    // fuera de esta lista mientras bluez dependía de detectar un adaptador —ahí
+    // `enable_service` lanzaba `ServiceException` en un equipo sin Bluetooth, con
+    // el disco ya formateado—, pero esa condición desapareció al volver bluez
+    // incondicional. La decisión de producto es que el Bluetooth venga de fábrica.
+    "bluetooth",
     // Hora por red. `timedatectl set-ntp` en el chroot no alcanza: escribe el
     // estado pero el servicio tiene que quedar habilitado para el arranque.
     "systemd-timesyncd",
@@ -235,7 +237,8 @@ pub fn paquetes_del_idioma(idioma: &str) -> Option<&'static str> {
 }
 
 pub fn paquetes_finales(fuentes: &FuentesDePaquetes<'_>) -> Vec<String> {
-    let mut todos: std::collections::BTreeSet<String> = fuentes.escritorio.iter().cloned().collect();
+    let mut todos: std::collections::BTreeSet<String> =
+        fuentes.escritorio.iter().cloned().collect();
     todos.extend(fuentes.aporte.paquetes.iter().cloned());
     // Los del hardware van acá y no entre los complementos, aunque los dos
     // salgan de la detección. Un complemento es opcional por diseño —el propio
@@ -267,7 +270,10 @@ pub fn configuracion(
         let mut todos: std::collections::BTreeSet<String> =
             SERVICIOS.iter().map(|s| s.to_string()).collect();
         todos.extend(fuentes.aporte.servicios.iter().cloned());
-        // Los del hardware: hoy sólo `bluetooth`, y sólo si hay adaptador.
+        // Los del hardware. Hoy ninguno los agrega —el único que había,
+        // `bluetooth`, pasó a la lista fija al volverse incondicional su
+        // paquete—, pero el punto de extensión queda para el próximo paquete que
+        // llegue con su servicio sólo en ciertas máquinas.
         todos.extend(fuentes.necesarios.servicios.iter().cloned());
         todos.into_iter().collect()
     };
@@ -566,14 +572,19 @@ mod tests {
             secretos: Secretos {
                 usuario: "clave-del-usuario".into(),
                 root: String::new(),
-                cifrado: if cifrar { "frase-del-disco".into() } else { String::new() },
+                cifrado: if cifrar {
+                    "frase-del-disco".into()
+                } else {
+                    String::new()
+                },
             },
         }
     }
 
     fn config(cifrar: bool) -> Value {
         let d = disco();
-        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, cifrar).unwrap();
+        let particiones =
+            planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, cifrar).unwrap();
         configuracion(
             &plan(cifrar),
             &particiones,
@@ -762,7 +773,8 @@ zsh";
         // `esp` en un disco que arranca por BIOS marca una partición de sistema
         // EFI que nadie va a leer.
         let d = disco();
-        let particiones = planificar_borrando(&d, Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
+        let particiones =
+            planificar_borrando(&d, Firmware::Bios, SistemaArchivos::Btrfs, false).unwrap();
         let c = configuracion(
             &plan(false),
             &particiones,
@@ -817,7 +829,10 @@ zsh";
         // `$arch` va antes que `$repo`.
         let arch = REPO_URL.find("$arch").expect("falta $arch");
         let repo = REPO_URL.rfind("$repo").expect("falta $repo");
-        assert!(arch < repo, "$arch tiene que ir antes que $repo: {REPO_URL}");
+        assert!(
+            arch < repo,
+            "$arch tiene que ir antes que $repo: {REPO_URL}"
+        );
     }
 
     /// **Las instantáneas se piden en el JSON, y sólo con btrfs.**
@@ -894,7 +909,8 @@ zsh";
     fn los_tamanos_llevan_el_sector_del_disco() {
         let mut d = disco();
         d.sector_logico = 4096; // un disco 4Kn
-        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Ext4, false).unwrap();
+        let particiones =
+            planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Ext4, false).unwrap();
         let c = configuracion(
             &plan(false),
             &particiones,
@@ -1035,7 +1051,8 @@ zsh";
     #[test]
     fn sin_complementos_no_se_suma_nada() {
         let d = disco();
-        let particiones = planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let particiones =
+            planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
         let mut p = plan(false);
         p.complementos.clear();
         let c = configuracion(
@@ -1142,31 +1159,81 @@ zsh";
     }
 
     #[test]
+    fn el_bluetooth_se_habilita_siempre_aunque_no_haya_hardware_ni_complementos() {
+        // La decisión de producto es que el Bluetooth venga de fábrica: su unidad
+        // tiene que salir habilitada en el JSON que recibe archinstall en **toda**
+        // instalación, sin depender de que la máquina tenga un adaptador ni de que
+        // el usuario haya elegido ningún complemento. Por eso se arma el caso más
+        // pelado posible —`aporte` vacío y `necesarios` por defecto, es decir
+        // ningún servicio detectado por hardware— y aun así `bluetooth` tiene que
+        // estar en `services`.
+        //
+        // Sin el arreglo (bluetooth fuera de `SERVICIOS` y aportado sólo por el
+        // hardware) este caso no lo incluye, que es exactamente la regresión que
+        // dejaba un equipo recién instalado sin Bluetooth.
+        let d = disco();
+        let particiones =
+            planificar_borrando(&d, Firmware::Uefi, SistemaArchivos::Btrfs, false).unwrap();
+        let mut p = plan(false);
+        p.complementos.clear();
+        let c = configuracion(
+            &p,
+            &particiones,
+            d.sector_logico,
+            Firmware::Uefi,
+            &FuentesDePaquetes {
+                escritorio: &["base".to_string(), "vasakos-desktop".to_string()],
+                aporte: &Aporte::default(),
+                necesarios: &Default::default(),
+            },
+            Some("4.4.0"),
+        );
+        let servicios: Vec<&str> = c["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert!(
+            servicios.contains(&"bluetooth"),
+            "el Bluetooth tiene que venir habilitado de fábrica: {servicios:?}"
+        );
+    }
+
+    #[test]
     fn la_lista_fija_no_habilita_servicios_de_paquetes_condicionales() {
         // Un servicio de esta lista se habilita en **toda** instalación, y
         // `enable_service` de archinstall lanza `ServiceException` si la unidad
         // no existe: la instalación aborta con el disco ya formateado.
         //
         // O sea que acá sólo pueden estar los servicios de paquetes que el
-        // escritorio instala siempre. Estos cuatro no lo son —vienen del
-        // hardware detectado o de un complemento— y `bluetooth` estuvo acá hasta
-        // que bluez salió del metapaquete, lo que convirtió a cualquier PC sin
-        // adaptador en una instalación que aborta.
-        for condicional in ["bluetooth", "ModemManager", "smartd", "cups"] {
+        // escritorio instala siempre. Estos tres no lo son —vienen del hardware
+        // detectado o de un complemento—, así que no pueden estar fijos.
+        for condicional in ["ModemManager", "smartd", "cups"] {
             assert!(
                 !SERVICIOS.contains(&condicional),
                 "{condicional} se habilitaría sin garantía de que su paquete esté instalado"
             );
         }
+        // `bluetooth`, en cambio, **sí** va fijo: su paquete `bluez` lo arrastra
+        // siempre el metapaquete `vasakos-desktop`, así que la unidad existe en
+        // toda instalación. Estuvo fuera de la lista mientras bluez dependía de
+        // detectar un adaptador; volverlo incondicional es lo que lo habilita acá.
+        assert!(
+            SERVICIOS.contains(&"bluetooth"),
+            "con bluez incondicional en el metapaquete, bluetooth va de fábrica"
+        );
     }
 
     #[test]
     fn cada_servicio_fijo_tiene_quien_lo_traiga() {
         // El otro lado de la regla: la lista no puede crecer sin decir de dónde
-        // sale cada unidad. Los `systemd-*` los trae systemd, que está siempre.
+        // sale cada unidad. Los `systemd-*` los trae systemd, que está siempre, y
+        // `bluetooth` lo trae `bluez`, que arrastra el metapaquete del escritorio.
         let duenos = [
             "greetd",
             "NetworkManager",
+            "bluetooth",
             "systemd-timesyncd",
             "avahi-daemon",
             "systemd-resolved",
@@ -1193,14 +1260,24 @@ zsh";
         // El catálogo tiene zh_CN, zh_TW, zh_HK y más: lo que decide es la
         // lengua y no el país, así que se compara el prefijo.
         for idioma in ["zh_CN.UTF-8", "zh_TW", "zh_HK.UTF-8", "zh_SG"] {
-            assert_eq!(paquetes_del_idioma(idioma), Some("noto-fonts-cjk"), "{idioma}");
+            assert_eq!(
+                paquetes_del_idioma(idioma),
+                Some("noto-fonts-cjk"),
+                "{idioma}"
+            );
         }
     }
 
     #[test]
     fn un_sistema_en_espanol_no_carga_299_mib_por_si_acaso() {
         // Que es lo que hacía el metapaquete.
-        for idioma in ["es_AR.UTF-8", "en_US.UTF-8", "pt_BR", "de_DE.UTF-8", "ar_EG"] {
+        for idioma in [
+            "es_AR.UTF-8",
+            "en_US.UTF-8",
+            "pt_BR",
+            "de_DE.UTF-8",
+            "ar_EG",
+        ] {
             assert_eq!(paquetes_del_idioma(idioma), None, "{idioma}");
         }
     }

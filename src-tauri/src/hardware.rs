@@ -31,9 +31,9 @@
 //!
 //! Para el segundo grupo, la señal no es una tabla de identificadores PCI: es
 //! **qué encontró el kernel que está corriendo**. La ISO trae el firmware de
-//! todo, así que si el medio vivo tiene un `/sys/class/bluetooth/hci0`, esa
-//! máquina tiene Bluetooth funcionando y el sistema instalado necesita `bluez`.
-//! Si no lo tiene, no lo va a necesitar nunca.
+//! todo, así que si el medio vivo tiene cargado el módulo `snd_sof`, esa máquina
+//! usa el audio SOF y el sistema instalado necesita `sof-firmware`. Si no lo
+//! tiene, no lo va a necesitar nunca.
 //!
 //! Es más confiable que adivinar por identificadores —no hay tabla que
 //! mantener, y cubre el hardware que todavía no existía cuando se escribió
@@ -51,9 +51,8 @@ const RAIZ_PCI: &str = "/sys/bus/pci/devices";
 
 /// Dónde el kernel publica lo que encontró y ató.
 ///
-/// Se miran las tres como directorios: que exista una entrada adentro es la
-/// señal. Parametrizadas junto con la de PCI para poder probarlas.
-const RAIZ_BLUETOOTH: &str = "/sys/class/bluetooth";
+/// Se miran como directorios: que exista una entrada adentro es la señal.
+/// Parametrizadas junto con la de PCI para poder probarlas.
 const RAIZ_RED: &str = "/sys/class/net";
 const RAIZ_MODULOS: &str = "/sys/module";
 
@@ -192,25 +191,25 @@ pub fn detectar_en(raiz: &Path) -> Hardware {
 
 /// Las señales de lo que el kernel del medio vivo encontró y ató.
 ///
-/// `bluetooth`, `wifi` y `audio-sof`. Van como marcas junto a las de PCI porque
-/// alimentan lo mismo: la decisión de qué paquetes necesita esta máquina.
+/// `wifi` y `audio-sof`. Van como marcas junto a las de PCI porque alimentan lo
+/// mismo: la decisión de qué paquetes necesita esta máquina.
+///
+/// `bluetooth` ya no sale de acá: `bluez` lo arrastra siempre el metapaquete del
+/// escritorio y su servicio va fijo, así que no hay nada condicional que detectar.
 ///
 /// Cada ruta se pasa por separado para poder probarlas con directorios de
-/// mentira; en el equipo son las tres constantes de arriba.
-pub fn señales_del_medio(bluetooth: &Path, red: &Path, modulos: &Path) -> BTreeSet<String> {
+/// mentira; en el equipo son las dos constantes de arriba.
+pub fn señales_del_medio(red: &Path, modulos: &Path) -> BTreeSet<String> {
     let mut marcas = BTreeSet::new();
-
-    // Un `hciN` significa que hay una controladora y que el kernel la ató. Sin
-    // adaptador el directorio existe y está vacío.
-    if std::fs::read_dir(bluetooth).into_iter().flatten().flatten().next().is_some() {
-        marcas.insert("bluetooth".to_string());
-    }
 
     // `phy80211` es el enlace que sólo tienen las interfaces inalámbricas. Mirar
     // el nombre —`wlan0`, `wlp3s0`— sería adivinar: los nombres predecibles de
     // systemd no garantizan el prefijo.
     if let Ok(entradas) = std::fs::read_dir(red) {
-        if entradas.flatten().any(|e| e.path().join("phy80211").exists()) {
+        if entradas
+            .flatten()
+            .any(|e| e.path().join("phy80211").exists())
+        {
             marcas.insert("wifi".to_string());
         }
     }
@@ -256,17 +255,6 @@ pub fn necesarios(hardware: &Hardware) -> Necesarios {
             "gpu-intel" => {
                 paquetes.insert("intel-media-driver".to_string());
             }
-            // El paquete **y su servicio**, juntos y en el mismo lugar. La
-            // lista fija de servicios llevaba `bluetooth` siempre, y al sacar
-            // bluez del escritorio eso se volvió una instalación que aborta:
-            // `enable_service` de archinstall lanza `ServiceException` si la
-            // unidad no existe, y a esa altura el disco ya está formateado.
-            // Que el par viaje junto es lo que hace que no se pueda separar.
-            "bluetooth" => {
-                paquetes.insert("bluez".to_string());
-                paquetes.insert("bluez-utils".to_string());
-                necesarios.servicios.insert("bluetooth".to_string());
-            }
             // La base de datos de regulaciones por país. `wpa_supplicant` no se
             // nombra: lo pide `networkmanager`, que sí es del escritorio.
             "wifi" => {
@@ -285,7 +273,6 @@ pub fn necesarios(hardware: &Hardware) -> Necesarios {
 pub fn detectar() -> Hardware {
     let mut hw = detectar_en(&PathBuf::from(RAIZ_PCI));
     hw.marcas.extend(señales_del_medio(
-        Path::new(RAIZ_BLUETOOTH),
         Path::new(RAIZ_RED),
         Path::new(RAIZ_MODULOS),
     ));
@@ -357,10 +344,14 @@ mod tests {
         // 0x020000 es Ethernet; 0x028000 es «otra» de red, donde caen las
         // inalámbricas.
         let cableada = arbol(&[("0000:02:00.0", VENDOR_BROADCOM, 0x020000)]);
-        assert!(!detectar_en(cableada.path()).marcas.contains("wifi-broadcom"));
+        assert!(!detectar_en(cableada.path())
+            .marcas
+            .contains("wifi-broadcom"));
 
         let inalambrica = arbol(&[("0000:02:00.0", VENDOR_BROADCOM, 0x028000)]);
-        assert!(detectar_en(inalambrica.path()).marcas.contains("wifi-broadcom"));
+        assert!(detectar_en(inalambrica.path())
+            .marcas
+            .contains("wifi-broadcom"));
     }
 
     #[test]
@@ -416,7 +407,6 @@ mod tests {
                     "gpu-amd",
                     "gpu-intel",
                     "wifi-broadcom",
-                    "bluetooth",
                     "wifi",
                     "audio-sof",
                 ]
@@ -427,15 +417,11 @@ mod tests {
     }
 
     /// Arma un árbol con las señales del medio vivo que se le pidan.
-    fn medio(bt: bool, wifi: bool, sof: bool) -> tempfile::TempDir {
+    fn medio(wifi: bool, sof: bool) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let (b, r, m) = (dir.path().join("bt"), dir.path().join("net"), dir.path().join("mod"));
-        std::fs::create_dir_all(&b).unwrap();
+        let (r, m) = (dir.path().join("net"), dir.path().join("mod"));
         std::fs::create_dir_all(&r).unwrap();
         std::fs::create_dir_all(&m).unwrap();
-        if bt {
-            std::fs::create_dir_all(b.join("hci0")).unwrap();
-        }
         // Una cableada siempre, para que «hay interfaces» no sea lo que decide.
         std::fs::create_dir_all(r.join("enp3s0")).unwrap();
         if wifi {
@@ -448,24 +434,15 @@ mod tests {
     }
 
     fn marcas_de(dir: &tempfile::TempDir) -> BTreeSet<String> {
-        señales_del_medio(
-            &dir.path().join("bt"),
-            &dir.path().join("net"),
-            &dir.path().join("mod"),
-        )
+        señales_del_medio(&dir.path().join("net"), &dir.path().join("mod"))
     }
 
     #[test]
     fn sin_nada_atado_no_se_marca_nada() {
-        // Los directorios existen y están vacíos: es lo que se ve en una máquina
-        // sin adaptador Bluetooth. Marcar por «el directorio está» instalaría
-        // bluez en todas.
-        assert!(marcas_de(&medio(false, false, false)).is_empty());
-    }
-
-    #[test]
-    fn un_hci_significa_que_hay_bluetooth() {
-        assert!(marcas_de(&medio(true, false, false)).contains("bluetooth"));
+        // Los directorios existen pero sólo con la cableada: es lo que se ve en
+        // una máquina sin inalámbrica ni audio SOF. Marcar por «el directorio
+        // está» instalaría paquetes en todas.
+        assert!(marcas_de(&medio(false, false)).is_empty());
     }
 
     #[test]
@@ -473,23 +450,23 @@ mod tests {
         // Los nombres predecibles de systemd no garantizan ningún prefijo, así
         // que mirar si empieza con «wl» es adivinar. El enlace `phy80211` sólo
         // lo tienen las inalámbricas.
-        let con = medio(false, true, false);
+        let con = medio(true, false);
         assert!(marcas_de(&con).contains("wifi"));
 
         // Y una máquina con sólo cableada no lo lleva, aunque tenga interfaces.
-        assert!(!marcas_de(&medio(false, false, false)).contains("wifi"));
+        assert!(!marcas_de(&medio(false, false)).contains("wifi"));
     }
 
     #[test]
     fn el_modulo_de_sof_significa_que_ese_audio_necesita_su_firmware() {
-        assert!(marcas_de(&medio(false, false, true)).contains("audio-sof"));
+        assert!(marcas_de(&medio(false, true)).contains("audio-sof"));
     }
 
     #[test]
     fn las_rutas_que_no_existen_no_paniquean() {
         // Pasa en un contenedor, y pasaría en una máquina sin esas clases.
         let vacio = Path::new("/no/existe/esto");
-        assert!(señales_del_medio(vacio, vacio, vacio).is_empty());
+        assert!(señales_del_medio(vacio, vacio).is_empty());
     }
 
     fn con_marcas(marcas: &[&str]) -> Hardware {
@@ -501,7 +478,9 @@ mod tests {
 
     #[test]
     fn una_maquina_intel_lleva_su_controlador_de_video() {
-        assert!(necesarios(&con_marcas(&["gpu-intel"])).paquetes.contains("intel-media-driver"));
+        assert!(necesarios(&con_marcas(&["gpu-intel"]))
+            .paquetes
+            .contains("intel-media-driver"));
     }
 
     #[test]
@@ -515,17 +494,10 @@ mod tests {
     fn una_nvidia_no_agrega_nada_acá() {
         // El propietario es un complemento: es una decisión con consecuencias y
         // se pregunta, no se instala sola.
-        assert_eq!(necesarios(&con_marcas(&["gpu-nvidia"])), Necesarios::default());
-    }
-
-    #[test]
-    fn el_bluetooth_trae_el_servicio_y_su_herramienta() {
-        let n = necesarios(&con_marcas(&["bluetooth"]));
-        assert!(n.paquetes.contains("bluez"));
-        assert!(n.paquetes.contains("bluez-utils"));
-        // Y su unidad, que es la mitad que faltaba: habilitar `bluetooth` sin
-        // instalar bluez hace abortar la instalación.
-        assert!(n.servicios.contains("bluetooth"));
+        assert_eq!(
+            necesarios(&con_marcas(&["gpu-nvidia"])),
+            Necesarios::default()
+        );
     }
 
     #[test]
@@ -543,48 +515,51 @@ mod tests {
         // lista base. Nombrarlos sería instalar los dos microcódigos en cada
         // máquina, que es exactamente lo que este cambio vino a sacar.
         let todas = con_marcas(&[
-            "gpu-intel", "gpu-amd", "gpu-nvidia", "bluetooth", "wifi", "audio-sof",
+            "gpu-intel",
+            "gpu-amd",
+            "gpu-nvidia",
+            "wifi",
+            "audio-sof",
             "wifi-broadcom",
         ]);
         let n = necesarios(&todas);
-        for prohibido in ["amd-ucode", "intel-ucode", "linux-firmware", "base", "mkinitcpio"] {
-            assert!(!n.paquetes.contains(prohibido), "{prohibido} lo pone archinstall");
+        for prohibido in [
+            "amd-ucode",
+            "intel-ucode",
+            "linux-firmware",
+            "base",
+            "mkinitcpio",
+        ] {
+            assert!(
+                !n.paquetes.contains(prohibido),
+                "{prohibido} lo pone archinstall"
+            );
         }
     }
 
     #[test]
-    fn ningun_servicio_llega_sin_el_paquete_que_lo_trae() {
-        // La regla que se rompió: la lista fija de servicios llevaba
-        // `bluetooth` siempre, y al sacar bluez del escritorio eso pasó a ser
-        // una instalación que aborta —`enable_service` lanza si la unidad no
-        // existe— con el disco ya formateado.
+    fn el_hardware_hoy_no_pide_ningun_servicio() {
+        // El único servicio que este módulo pedía era `bluetooth`, atado a su
+        // paquete para que no se habilitara sin instalar bluez. Ahora bluez llega
+        // siempre desde el metapaquete y su unidad va fija, así que ninguna marca
+        // de hardware agrega servicios: sólo paquetes.
         //
-        // Cada servicio que este módulo pide tiene que venir con el paquete que
-        // lo instala, y por eso los dos salen de la misma función.
-        let quien_lo_trae = [("bluetooth", "bluez")];
-
-        for marca in ["gpu-intel", "gpu-amd", "gpu-nvidia", "bluetooth", "wifi", "audio-sof"] {
-            let n = necesarios(&con_marcas(&[marca]));
-            for servicio in &n.servicios {
-                let paquete = quien_lo_trae
-                    .iter()
-                    .find(|(s, _)| s == servicio)
-                    .map(|(_, p)| *p)
-                    .unwrap_or_else(|| panic!("servicio sin dueño conocido: {servicio}"));
-                assert!(
-                    n.paquetes.contains(paquete),
-                    "se habilitaría {servicio} sin instalar {paquete}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn sin_bluetooth_no_se_habilita_su_servicio() {
-        // Un PC de escritorio sin adaptador. Antes de esto, la instalación
-        // abortaba en este caso.
-        for marca in ["gpu-amd", "wifi", "audio-sof"] {
-            assert!(necesarios(&con_marcas(&[marca])).servicios.is_empty(), "{marca}");
+        // El campo `servicios` de `Necesarios` sigue existiendo como punto de
+        // extensión —el struct documenta por qué paquete y servicio viajan
+        // juntos—, pero hoy nadie lo llena. Que siga vacío es lo que esta prueba
+        // custodia: un servicio nuevo acá tendría que llegar con su paquete.
+        for marca in [
+            "gpu-intel",
+            "gpu-amd",
+            "gpu-nvidia",
+            "wifi",
+            "audio-sof",
+            "wifi-broadcom",
+        ] {
+            assert!(
+                necesarios(&con_marcas(&[marca])).servicios.is_empty(),
+                "{marca} pidió un servicio y hoy ninguna marca debería"
+            );
         }
     }
 
