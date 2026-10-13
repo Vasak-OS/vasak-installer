@@ -1,319 +1,370 @@
-# vasak-installer — el instalador de VasakOS
+# Vasak installer
 
-Interfaz Tauri sobre **archinstall**. Todos los pasos se responden en la ventana;
-archinstall no muestra ninguno de sus menús.
 
-Reemplaza a `vasakos-calamares`. El cambio no es sólo de interfaz: calamares
-instalaba **copiando el squashfs de la ISO** (`unpackfs`), sin red y en pocos
-minutos; esto hace **`pacstrap` desde los repositorios**, así que la instalación
-necesita conexión de punta a punta, tarda entre quince minutos y una hora, y a
-cambio el sistema instalado queda con los paquetes al día en vez de con los que
-tenía la ISO el día que se armó.
 
 ---
 
-## Cómo está partido
+## Tecnología
 
-Son **dos procesos**, y ésa es la decisión de la que cuelga todo lo demás.
+[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?style=flat&logo=rust)](https://www.rust-lang.org/) [![Tauri](https://img.shields.io/badge/Tauri-2.0-24283b?style=flat&logo=tauri)](https://tauri.app/) [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat&logo=vue.js)](https://vuejs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
 
-```text
-┌──────────────────────────┐        NDJSON        ┌──────────────────────────┐
-│ vasak-installer          │  ←───────────────→   │ vasak-installer-helper   │
-│ (usuario de la sesión)   │   stdin / stdout     │ (root, vía pkexec)       │
-│                          │                      │                          │
-│ Vue · WebView            │                      │ lsblk · openssl · parted │
-│ sondeo sin privilegios   │                      │ archinstall              │
-└──────────────────────────┘                      └───────────┬──────────────┘
-                                                              │ --plugin
-                                                  ┌───────────▼──────────────┐
-                                                  │ plugin/vasakos.py        │
-                                                  │ progreso + post-config   │
-                                                  └──────────────────────────┘
+## Estado
+
+[![CI](https://github.com/Vasak-OS/vasak-installer/actions/workflows/ci.yml/badge.svg)](https://github.com/Vasak-OS/vasak-installer/actions/workflows/ci.yml)
+[![Versión](https://img.shields.io/github/v/release/Vasak-OS/vasak-installer?style=flat&label=Versi%C3%B3n)](https://github.com/Vasak-OS/vasak-installer/releases)
+[![Licencia](https://img.shields.io/github/license/Vasak-OS/vasak-installer?style=flat)](LICENSE)
+[![Cobertura](https://sonarcloud.io/api/project_badges/measure?project=Vasak-OS_vasak-installer&metric=coverage&style=flat)](https://sonarcloud.io/summary/new_code?id=Vasak-OS_vasak-installer)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=Vasak-OS_vasak-installer&metric=alert_status&style=flat)](https://sonarcloud.io/summary/new_code?id=Vasak-OS_vasak-installer)
+[![Tamaño repo](https://img.shields.io/github/repo-size/Vasak-OS/vasak-installer?style=flat)](https://github.com/Vasak-OS/vasak-installer)
+
+---
+
+## Descripción
+
+
+
+**Para el usuario:** 
+
+**Integración VasakOS:** Integra con el ecosistema VasakOS vía D-Bus y configuración compartida.
+
+---
+
+## Arquitectura (diagramas)
+
+> Copia y pega la plantilla que necesites, descomenta y adapta.
+
+### Flujo de datos
+
+```mermaid
+<!--
+graph TD
+    A[Entrada: Teclado / Ratón / D-Bus / Sistema] --> B[Procesamiento: Core Rust + Tauri Commands]
+    B --> C[Salida: UI actualizada / Acciones del sistema]
+    style A fill:#e1f5fe
+    style C fill:#e8f5e9
+-->
 ```
 
-**La ventana no corre como root.** Es un motor de navegador completo, con su JIT
-y su pila de red; darle privilegios para poder llamar a `parted` cambia una
-superficie de ataque de dos comandos por una de un navegador. Hay además una
-razón visible: como root, el plugin de configuración leería `/root` en vez del
-perfil de la sesión live, y el instalador aparecería con otro tema y otros iconos
-que el escritorio que lo rodea.
+### Componentes internos
 
-**El ayudante se lanza al llegar al paso del disco**, no al abrir la ventana. Una
-aplicación que arranca pidiendo autorización le pide a alguien que apruebe algo
-que todavía no sabe qué es. Casi todo el sondeo —`lsblk`, `/proc`, los catálogos
-de `/usr/share`— no necesita privilegios y corre en el proceso de la ventana; root
-hace falta para dos cosas: correr `os-prober` (monta particiones ajenas para
-mirar qué sistema tienen) y la instalación.
+```mermaid
+<!--
+flowchart LR
+    subgraph App[Vasak installer]
+        UI[Frontend Vue 3 + vue-libvasak]
+        Core[Core Rust: lógica principal]
+        IPC[Tauri Commands / Eventos]
+        System[Systemd / D-Bus / PipeWire / Wayland]
+    end
+    UI --> IPC
+    IPC --> Core
+    Core --> DBus[(D-Bus / zbus)]
+    Core --> System
+    style UI fill:#f3e5f5
+    style Core fill:#e3f2fd
+    style DBus fill:#fff3e0
+    style System fill:#fce4ec
+-->
+```
 
----
+### Integración en el sistema VasakOS
 
-## Por qué archinstall se maneja por archivo y no como librería
-
-archinstall se puede usar de dos formas: importándolo desde Python y manejando su
-clase `Installer` paso a paso, o pasándole un archivo de configuración y dejando
-que corra solo. Acá se hace lo segundo.
-
-El archivo de configuración es su **entrada versionada y documentada**: tiene un
-campo `version`, su esquema está publicado, y el propio archinstall sabe
-generarlo desde sus menús. La API de Python, en cambio, se reacomoda entre
-versiones mayores —los módulos se movieron entre la 2.x, la 3.x y la 4.x—, y un
-instalador que la usa se rompe con cada actualización del paquete.
-
-Todo lo que sabe del esquema de archinstall vive en **`archconfig.rs` y en ningún
-otro lado**: los nombres de las claves, que `Grub` va con mayúscula, que los
-tamaños son objetos con unidad y sector. Cuando archinstall cambie de versión
-mayor, ése es el único archivo que hay que revisar.
-
-### El precio de esa decisión, y cómo se paga
-
-archinstall **no emite nada legible por máquina**: todo su progreso son líneas de
-texto para humanos. Sacar la barra de progreso de adivinar la redacción de sus
-mensajes es frágil de la peor manera —un cambio de una palabra deja la barra
-quieta sin ningún error visible.
-
-Por eso el instalador envía **su propio plugin de archinstall**
-(`src-tauri/plugin/vasakos.py`). archinstall define ganchos `on_mirrors`,
-`on_mkinitcpio`, `on_pacstrap`, `on_add_bootloader`, `on_user_created`,
-`on_genfstab`… que se llaman en los puntos que corresponden a cada etapa real —
-unos al empezarla y otros al terminarla: `on_genfstab` corre **después** de que
-se escribió el fstab. El plugin escribe NDJSON en un archivo que el ayudante
-sigue como un `tail -f`, y de ahí salen los pasos de la interfaz.
-
-El mismo plugin es donde va **la post-configuración de VasakOS**. La alternativa
-era `custom_commands` en el JSON: quince cadenas de shell sin tests, sin manejo de
-errores y sin forma de saber cuál de las quince falló.
-
-Y va en **`on_genfstab`**, que es el último que corre. No en `on_install`, que
-es el que uno elegiría por el nombre: archinstall lo llama al final de
-`minimal_installation()` —línea 103 de `guided.py`— y la cuenta se crea en la
-136, `vasakos-desktop` se instala en la 146 y `genfstab()` es la 184. Ahí es el
-único momento en que el destino está completo y todavía montado. Elegir mal ese
-gancho da una instalación que termina bien y no arranca, sin ningún error: los
-ajustes corren sobre archivos que no existen todavía y no fallan.
-
-Se escribe en un archivo y no en la salida estándar porque ahí escriben también
-pacman, `mkinitcpio` y todo lo que archinstall invoca: una línea de JSON partida
-por un `print` ajeno es un evento perdido.
+```mermaid
+<!--
+C4Context
+    title Vasak installer en VasakOS
+    Person(usuario, "Usuario", "Persona que usa el sistema")
+    System_Boundary(c1, "VasakOS") {
+        System(app, "Vasak installer", "")
+        System_Ext(settings, "vasak-settings", "Configuración central")
+        System_Ext(keyring, "vasak-keyring", "Secrets y claves")
+        System_Ext(accounts, "vasak-accounts", "Cuentas e identidad")
+        System_Ext(permissions, "vasak-permissions", "Permisos y portales")
+    }
+    System_Ext(systemd, "systemd", "Gestión de servicios")
+    System_Ext(dbus, "D-Bus", "Bus de mensajes del sistema")
+    System_Ext(wayland, "Wayland / Wayfire", "Compositor")
+    System_Ext(pipewire, "PipeWire", "Multimedia")
+    Rel(usuario, app, "Usa")
+    Rel(app, settings, "Lee/escribe config")
+    Rel(app, keyring, "Guarda/lee secrets")
+    Rel(app, accounts, "Identidad de cuenta")
+    Rel(app, permissions, "Solicita permisos")
+    Rel(app, systemd, "Activación / sockets")
+    Rel(app, dbus, "Expone / consume interfaces")
+    Rel(app, wayland, "Superficies / protocolos")
+    Rel(app, pipewire, "Streams de audio/video")
+-->
+```
 
 ---
 
-## Las decisiones que hay que conocer antes de tocar algo
+## Instalación
 
-### El particionado se calcula acá, y es el código que puede borrar datos
+### Arch Linux (repo oficial)
 
-archinstall **no propone ninguna distribución de particiones desde un archivo**:
-su `disk_config` espera la lista completa con posiciones y tamaños exactos, y su
-sugerencia automática vive en los menús interactivos que no usamos.
+```bash
+pacman -S vasak-vasak-installer
+```
 
-`layout.rs` es una función pura por eso: recibe un disco y devuelve particiones,
-así que se puede probar con cien discos distintos sin tocar ninguno. Lo que fija:
+### Debian / Ubuntu (.deb)
 
-- **1 MiB inicial** para el MBR protector y la cabecera GPT; alinea todo lo demás.
-- **ESP de 1 GiB**, no de 512 MiB. En `/boot` viven el kernel y **los dos**
-  initramfs, y cada actualización los reescribe: con 512 MiB, un sistema con dos
-  kernels y microcódigo queda al borde, y `pacman` fallando por espacio en `/boot`
-  deja un equipo que no arranca.
-- **1 MiB reservado al final** para la cabecera GPT secundaria.
-- **La raíz btrfs va sin punto de montaje propio.** Con `mountpoint` y
-  subvolúmenes a la vez, archinstall monta la partición cruda en `/` y después los
-  subvolúmenes encima: el sistema termina instalado **afuera** de `@`, y el primer
-  arranque encuentra un `@` vacío. Hay un test que lo fija.
-- **El ESP nunca va cifrado**: el firmware lo lee antes de que exista nada que
-  pueda descifrarlo.
-- Los subvolúmenes son los mismos que usaba calamares (`@`, `@home`, `@root`,
-  `@srv`, `@cache`, `@tmp`, `@log`) y no los de archinstall, para que un respaldo
-  de subvolúmenes hecho con la ISO anterior se restaure en ésta.
+```bash
+wget https://github.com/Vasak-OS/vasak-installer/releases/download/v{{VERSION}}/vasak-vasak-installer_{{VERSION}}_amd64.deb
+sudo apt install ./vasak-vasak-installer_{{VERSION}}_amd64.deb
+```
 
-### Los dos teclados
+### Desde fuente
 
-Hay **dos** teclados que configurar y no se llaman igual. El de la consola
-(`KEYMAP` en `/etc/vconsole.conf`, que es lo que consume archinstall) llama
-`la-latin1` al latinoamericano; el del escritorio (el diseño de XKB, que usa
-Wayland y por lo tanto Wayfire) lo llama `latam`.
+```bash
+git clone https://github.com/Vasak-OS/vasak-installer.git
+cd vasak-installer
 
-Configurar sólo el primero es el error que se nota tarde y mal: alguien elige su
-teclado, la instalación termina bien, y **en el primer arranque no puede escribir
-su contraseña** porque el greeter quedó en `us`. La tabla de traducción está en
-`teclado.rs`, con tests contra el `base.lst` real de `xkeyboard-config`, y el
-plugin la aplica en `/etc/vasak/teclado.conf` y en `/etc/environment.d/`.
+# Desarrollo (recarga en caliente frontend + backend)
+bun run dev
 
-### Las contraseñas
+# Build producción
+bun run build
 
-Nunca van por `argv` y nunca se escriben en claro. `/proc/<pid>/cmdline` lo puede
-leer cualquier usuario, así que una contraseña en la línea de comandos es una
-contraseña publicada mientras el proceso vive.
+# Solo frontend
+bun run build:frontend
 
-El camino es: la ventana las tiene en memoria → viajan una vez al ayudante por el
-canal NDJSON → el ayudante las pasa a `openssl passwd -6` **por entrada
-estándar** → al archivo de credenciales va sólo el hash. La ventana las olvida en
-cuanto la instalación arranca (`olvidarSecretos()`).
+# Solo backend Rust
+cargo build --release --locked
+```
 
-La única que sí va en claro es la frase de LUKS, porque `cryptsetup` necesita la
-frase y no un hash. Por eso el archivo de credenciales se escribe en `/run` con
-modo `0600` —el modo va en `OpenOptions`, no en un `chmod` posterior, que deja
-una ventana abierta— y se borra al terminar.
+### Flatpak / AppImage
 
-Se rechazan los caracteres de control porque `openssl passwd -stdin` lee **una
-sola línea**: un `\n` en el medio haría hashear algo distinto de lo tipeado.
-Espacios y acentos sí se aceptan; rechazarlos sería empobrecer las contraseñas
-por comodidad nuestra.
+> *Placeholder: añadir cuando exista paquete Flatpak o AppImage oficial.*
 
-### Los complementos: navegador, controladores e impresoras
+---
 
-Elegir navegador, instalar los controladores que el hardware necesita y activar
-las impresoras son **la misma forma**: paquetes opcionales más servicios
-opcionales, elegidos en la interfaz. Resolverlos con un mecanismo y no con tres
-es lo que evita que el cuarto empiece de cero.
+## Uso rápido
 
-Un complemento es un `id`, una categoría, una lista de paquetes y una de
-servicios. El catálogo vive en `complementos.toml` y se lee en tiempo de
-ejecución: **sumar un navegador es editar un archivo de datos**, sin recompilar
-ni rehacer la ISO. `archconfig.rs` funde lo elegido en `packages` y `services`.
+```bash
+# Se lanza automáticamente (systemd --user) o manualmente:
+vasak-installer
+```
 
-Tres reglas que sostienen el diseño:
+### Atajos / flags principales
 
-- **Ningún complemento puede ser necesario para arrancar.** Lo imprescindible
-  está en `vasakos-desktop`. Por eso un catálogo ilegible no aborta la
-  instalación: significa quedarse sin navegador, que se instala después, y no un
-  disco formateado por un archivo de datos mal editado. Hay un test que verifica
-  que ningún paquete imprescindible se haya colado en el catálogo.
-- **Los servicios son de sistema.** archinstall corre `systemctl enable` sin
-  `--user`, así que uno de usuario no lo encuentra y la instalación falla en el
-  paso de servicios.
-- **Nada viene marcado por conveniencia nuestra.** Lo que se marca solo es lo que
-  la mayoría necesita más lo que el hardware propone, y esto último se dice con
-  todas las letras al lado de la casilla.
+| Acción | Comando / Tecla |
+|--------|-----------------|
+| Acción principal | `vasak-installer` |
+| Configuración | `vasak-installer --config` |
+| Ayuda | `vasak-installer --help` |
 
-### La detección de hardware lee `/sys`, no `lspci`
+> **Captura:** `assets/demo.gif` *(placeholder — sustituir por GIF real)*
 
-`hardware.rs` recorre `/sys/bus/pci/devices` y mira `vendor` y `class` de cada
-uno. Tres razones, en orden de peso: es un puñado de lecturas de archivos de doce
-bytes contra un `fork`+`exec` y la carga de `libpci`; la salida de `lspci` está
-pensada para una persona y cambia entre versiones, y un parseo que se rompe en
-silencio deja a alguien sin aceleración sin saber por qué; y `pciutils` tendría
-que estar instalado, mientras que `/sys` lo pone el kernel siempre.
+---
 
-La clase importa tanto como el fabricante: toda GPU trae además un dispositivo de
-audio HDMI de la misma marca, así que mirando sólo el fabricante un equipo con
-audio de AMD y video de otra marca proponía el controlador equivocado. Lo mismo
-con Broadcom: sólo las inalámbricas llevan el módulo DKMS; las cableadas andan
-con el del kernel, y proponerlo las haría recompilar un módulo en cada
-actualización de kernel para nada.
+## Configuración
 
-Todo esto es **una sugerencia**. Lo detectado llega como una casilla marcada de
-antemano con su explicación, nunca como algo que se instala solo: el controlador
-propietario de NVIDIA es una decisión con consecuencias, y tomarla por alguien
-sin decírselo es peor que no proponerla.
+### Archivo de configuración
 
-### La lista de paquetes no está compilada
+```
+~/.config/vasak/vasak-installer.toml
+```
 
-`paquetes.txt` se lee en tiempo de ejecución desde
-`/usr/share/vasak-installer/paquetes.txt`, así que sumar un paquete al escritorio
-no obliga a recompilar el instalador ni a rehacer la ISO.
+### Variables de entorno
 
-Y es **una sola línea**: el escritorio entero es el metapaquete
-`vasakos-desktop`, que se arma en `PKGBUILDS/vasakos-desktop/` y arrastra por
-dependencia los 255 paquetes que forman VasakOS. `paquetes.txt` lo nombra a él
-y agrega el kernel; `archiso/packages.x86_64` lo nombra a él y agrega lo que
-sólo tiene sentido en el medio live. Sumar un paquete al escritorio es editarle
-las `depends` al metapaquete: ninguna de las dos listas se toca.
+| Variable | Descripción | Por defecto |
+|----------|-------------|-------------|
+| `VASAK_DEBUG` | Activa logs de depuración en consola | `false` |
+| `VASAK_PROFILE` | Perfil de rendimiento: `balanced`, `performance`, `power-save` | `balanced` |
 
-Antes cada lista estaba escrita entera, en dos repositorios distintos y
-sincronizadas a mano. Divergían, y de la peor manera: sumar un paquete y
-olvidarse de la otra lista daba una ISO en la que la función andaba y un sistema
-instalado en el que no, diferencia que sólo aparece después de instalar.
+### Integración con `tauri-plugin-config-manager`
 
-### El repositorio de VasakOS va en la configuración de archinstall
-
-En `mirror_config.custom_repositories`. Sin eso, `pacstrap` no encuentra ninguno
-de los paquetes `vasak-*` y la instalación muere en el paso del escritorio —
-**después** de haber formateado el disco. El plugin lo verifica de nuevo sobre el
-sistema instalado en `_asegurar_mirrorlist`.
-
-### La autorización
-
-La acción de polkit (`ar.net.vasak.installer.run-helper`) trae `auth_admin` por
-defecto: **pide autenticación**. La regla que la releva sin preguntar
-(`49-vasak-installer.rules`) la envía **la ISO**, no el paquete, porque sólo tiene
-sentido en el medio live, donde el usuario de autologin no tiene contraseña que
-escribir. El plugin la borra del sistema instalado; si sobreviviera, cualquiera
-del grupo `wheel` podría lanzar un proceso root sin autenticarse.
-
-La anotación `exec.path` de la acción tiene que coincidir **exactamente** con
-dónde el PKGBUILD instala el ayudante. Si no coinciden, pkexec cae en la acción
-genérica y el diálogo dice «ejecutar un programa como otro usuario» en vez de
-explicar que se va a instalar el sistema.
+- Esquemas de color: respeta `--ui-primary`, `--ui-surface`, `--ui-focus`, `--ui-on-surface`, `--ui-border`
+- Tema de iconos: usa el tema del sistema (`vasakos-icon-theme`) vía `vicon` lookup
+- Radio de bordes: variable CSS `--ui-radius` del esquema activo (por defecto 12px)
+- Fuentes: `--ui-font-family`, `--ui-font-size-base` desde el esquema
 
 ---
 
 ## Desarrollo
 
+### Requisitos
+
+- **Rust:** `rustup` toolchain estable (`rust-toolchain.toml` fija la versión)
+- **Node / bun:** `bun` ≥ 1.1 (nunca npm/yarn/pnpm para apps Tauri)
+- **Sistema:** `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libssl-dev`
+- *`libgtk-layer-shell-dev`, `wayland-protocols`, `wayfire-dev` para Wayland*
+
+### Dependencias de desarrollo
+
+#### Sistema (paquetes Arch / Debian / Fedora)
+
+`base-devel`, `pkgconf`, `libssl-dev`, `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `libpipewire-0.3-dev`, `libwireplumber-0.5-dev`, `libdbus-1-dev`, `libudev-dev`, `libxkbcommon-dev`, `libwayland-dev`, `meson`, `ninja`, `clang`, `lld`
+
+#### Rust
+
+`rustup` → `stable` + `rustfmt` + `clippy`
+
+#### Node
+
+**Solo `bun`** (nunca npm/yarn/pnpm para apps Tauri). `bun --version` ≥ 1.1
+
+#### Herramientas CLI
+
+`just` (command runner), `cargo-binstall` (opcional), `cargo-llvm-cov` (para cobertura)
+
+### Correr la app en desarrollo
+
 ```bash
-bun install
-bun test                                          # frontend
-cargo test --manifest-path src-tauri/Cargo.toml   # backend
-bun run lint
-bunx --bun tauri dev
+# Frontend (Vite dev server + Tauri dev)
+bun run tauri dev
+
+# Solo frontend (Vite)
+bun run dev
+
+# Solo backend (cargo watch)
+cargo watch -x "run --bin vasak-installer"
 ```
 
-**Compilá siempre con `tauri build`, nunca con `cargo build --release` a secas.**
-Con `cargo` el binario queda apuntando al servidor de desarrollo: la página
-«carga» vacía y todo parece roto por otra razón.
-
-Para probar el ayudante sin instalar el paquete:
+### Compilar / Build de release
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml
+# Build completo (frontend + backend + bundle)
+bun run tauri build
+
+# Solo frontend (para testear bundle después)
+bun run build
+
+# Solo backend Rust (binario optimizado)
+cargo build --release --locked
+
+# Paquetes nativos
+# Arch: makepkg -sf en PKGBUILDS/vasak-installer/
+# Debian: cargo deb --no-build --target-dir src-tauri/target/release/debian
 ```
 
-y apuntar `VASAK_INSTALLER_HELPER` al binario que quedó en
-`src-tauri/target/debug/vasak-installer-helper`. Como esa ruta no coincide con la
-anotación de la acción de polkit, pkexec va a pedir contraseña de administrador:
-es lo esperado fuera del medio live.
+### Targets principales
 
-### Probar la instalación sin arriesgar nada
+```bash
+# Desarrollo (Tauri dev server + hot reload)
+bun run dev
 
-En una máquina virtual con un disco vacío. `archinstall --dry-run` existe, pero
-el instalador no lo expone todavía: es lo primero que conviene sumar si se va a
-trabajar sobre el flujo de instalación.
+# Build producción
+bun run build
+
+# Solo frontend
+bun run build:frontend
+
+# Solo backend Rust
+cargo build --release --locked
+
+# Lint + tipos (pre-commit / CI)
+bunx --bun biome check .
+bunx vue-tsc --noEmit
+cargo fmt --check
+```
+
+### Pruebas
+
+```bash
+# Suite completa JS (Vitest via bun:test)
+bun test
+
+# Suite completa Rust (crates en pruebas_rust del CI)
+cargo test -p vasak-installer-core -p vasak-installer-ui --locked
+
+# Integración (requiere Wayfire corriendo)
+cargo test -p vasak-installer-integration --locked -- --ignored
+```
+
+### Convención de commits
+
+[Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/):
+
+```
+<tipo>(<ámbito>): <descripción corta>
+
+[cuerpo opcional]
+
+[pie opcional: Closes #N]
+```
+
+Tipos habituales: `feat`, `fix`, `bugfix`, `docs`, `ci`, `chore`, `security`, `refactor`, `perf`, `test`.
+
+### Cómo abrir PR
+
+1. Rama desde `origin/main`:
+   ```bash
+   git worktree add -b feat/tema ~/wt/vasak-installer-tema origin/main
+   ```
+2. Prefijos de rama: `fix/`, `feat/`, `bugfix/`, `docs/`, `ci/`, `chore/`, `security/`
+3. Escribe el fix → **`qa` escribe las pruebas** (fallan sin el fix) → suite verde → abre PR
+4. Al abrir PR, **cuatro cosas obligatorias**:
+   - Asignado a `JoaquinDecima`
+   - Etiqueta `enhancement` o `bug` (+ `ci` / `dependencies` si aplica)
+   - Añadido al proyecto «VasakOS Roadmap»
+   - Status **In Progress**
 
 ---
 
-## Tests
+## Arquitectura (texto)
 
-**Cada cambio va con tests, en el mismo commit.** Lo que conviene probar es lo
-que se rompe callado. Dos ejemplos de este repo, los dos encontrados por sus
-tests antes de llegar a ninguna máquina:
+### Crates / módulos principales
 
-- **`lsblk --json` sin `--tree` devuelve una lista plana**, con las particiones
-  como hermanas de su propio disco y no anidadas. Leer `children` daba todo disco
-  sin particiones — y con eso se caía la comprobación de «está en uso», que es la
-  que impide formatear el pendrive del que se arrancó, porque el disco no está
-  montado: lo está su partición. Ahora se asocia por `PKNAME`.
-- **`lsblk` informa `/dev/zram0` con tipo `disk`**, y VasakOS activa zram por
-  defecto, así que aparece en todo equipo. Sin el filtro de pseudodispositivos se
-  ofrecía como destino de instalación.
+| `vasak-installer-core` | Lógica compartida: estado, D-Bus, IPC |
+| `vasak-installer-ui` | Frontend Vue 3 + componentes vue-libvasak |
+| `vasak-installer-tauri` | Puente Tauri: commands, eventos, WebView |
 
-Verificá que un test sirve reintroduciendo el bug a propósito y viendo que falle.
+### Interfaces D-Bus / zbus expuestas
+
+| `org.vasak.Vasak-installer` | `GetState()`, `StateChanged(dict)`, `SetConfig(dict)` | Estado y control principal |
+| `org.vasak.Vasak-installer.Panel` | `SetPosition(string)`, `SetAutohide(bool)`, `Height(u32)` | Configuración panel en runtime |
+
+### Puntos de extensión
+
+- **Plugins:** Sistema de plugins modular
+- **Hooks:** Hooks de ciclo de vida
+- **API pública Rust:** API pública del crate principal
+
+### Features / Cargo features
+
+| Feature | Descripción | Default |
+|---------|-------------|---------|
+| `system-tray` | Bandeja del sistema + menú contextual | ✓ |
+| `notifications` | Integración libnotify / freedesktop | ✓ |
+| `updater` | Auto-actualización (tauri-plugin-updater) | |
+| `devtools` | DevTools en release (solo debug) | |
+| `experimental-wayland` | Protocolo Wayland inestable | |
+
+Y para apps Tauri+Vue: features del `tauri.conf.json` → `bundle` / `plugins` / `allowlist` (capabilities).
 
 ---
 
-## Lo que falta
+## Pruebas y calidad
 
-- **Probarlo de verdad.** Nada de esto se ejecutó todavía contra un disco: hace
-  falta una máquina virtual con la ISO armada.
-- **`--dry-run` expuesto en la interfaz**, para poder recorrer el flujo entero
-  sin escribir.
-- **Usar particiones existentes** en vez de borrar el disco entero. La estructura
-  ya lo contempla (`EsquemaDisco` tiene una sola variante y `wipe` está en una
-  sola clave), pero no hay interfaz.
-- **Más complementos**: el mecanismo está y agregar uno es editar
-  `complementos.toml`. Faltan al menos audio profesional, virtualización y los
-  controladores de tabletas gráficas.
-- **Progreso fino durante `pacstrap`**, que es el paso largo. Hoy la barra se
-  mueve por etapas; el conteo `(12/1543)` de pacman está en el registro y se
-  podría parsear.
+- **Cobertura objetivo:** ≥ 80 % del código nuevo (SonarCloud Quality Gate)
+- **Informes:** GitHub Actions → pestaña *SonarCloud Code Analysis* → enlace a SonarCloud
+- **Añadir pruebas:** ver `AGENTS.md` sección 9 (mapa de repos y comandos de prueba)
+- **Regla:** toda corrección lleva prueba escrita por `qa` que falla sin el fix
+
+---
+
+## Contribuir
+
+- **Guía:** [.github/CONTRIBUTING.md](https://github.com/Vasak-OS/.github/blob/main/CONTRIBUTING.md)
+- **Plantillas de issue:** [.github/ISSUE_TEMPLATE/](https://github.com/Vasak-OS/.github/tree/main/ISSUE_TEMPLATE)
+- **Código de conducta:** [CODE_OF_CONDUCT.md](https://github.com/Vasak-OS/.github/blob/main/CODE_OF_CONDUCT.md)
+
+---
+
+## Donadores / Sponsors
+
+[![Sponsors](https://img.shields.io/github/sponsors/Vasak-OS?style=flat&label=Sponsors)](https://github.com/sponsors/Vasak-OS)
+
+> **Backers:** *Actualizado automáticamente en CI desde GitHub Sponsors / OpenCollective / Polar.*
+
+[💖 Donar al proyecto](https://github.com/sponsors/Vasak-OS)
+
+---
 
 ## Licencia
 
-GPL-3.0-or-later.
+`GPL-3.0` — Copyright © 2026 **Vasak-OS Contributors**
+
+[Ver licencia completa](LICENSE)
