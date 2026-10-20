@@ -231,7 +231,6 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             <PasswordField
               id="clave"
               v-model="store.secretos.usuario"
-              autocomplete="new-password"
             />
             <div class="flex items-center gap-2">
               <div class="min-w-0 flex-1">
@@ -257,7 +256,6 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             <PasswordField
               :id="id"
               v-model="store.secretos.usuarioRepetida"
-              autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
             />
@@ -300,7 +298,6 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             <PasswordField
               id="root1"
               v-model="store.secretos.root"
-              autocomplete="new-password"
             />
           </FormGroup>
           <FormGroup
@@ -312,7 +309,6 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             <PasswordField
               :id="id"
               v-model="store.secretos.rootRepetida"
-              autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
             />

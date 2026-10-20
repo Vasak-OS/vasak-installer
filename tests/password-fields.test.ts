@@ -6,8 +6,7 @@
  * Mayús, en la pantalla donde un error de tipeo deja el disco sin abrir.
  *
  * Se prueban las dos pantallas montadas, con el campo vivo: que sea el
- * componente, que pida `new-password` (todas crean la clave) y que el botón de
- * mostrar cambie el tipo del campo. Y una guarda sobre el fuente, para que no
+ * componente, y que el botón de mostrar cambie el tipo del campo. Y una guarda sobre el fuente, para que no
  * vuelva un `type="password"` crudo en otra pantalla.
  */
 
@@ -45,12 +44,11 @@ afterEach(() => {
 	view = null;
 });
 
-/** Cada campo tiene que ser un `PasswordField` que crea la clave y se puede revelar. */
+/** Cada campo tiene que ser un `PasswordField` y se puede revelar. */
 async function expectRevealable(wrapper: VueWrapper, amount: number) {
 	const fields = wrapper.findAllComponents(PasswordField);
 	expect(fields).toHaveLength(amount);
 	for (const field of fields) {
-		expect((field.props() as { autocomplete?: string }).autocomplete).toBe('new-password');
 		const input = field.find('input');
 		expect(input.attributes('type')).toBe('password');
 		const toggle = field.find('button[aria-pressed]');

@@ -431,7 +431,6 @@ onMounted(async () => {
             <PasswordField
               id="frase"
               v-model="store.secretos.cifrado"
-              autocomplete="new-password"
               :placeholder="t('disco.frasePlaceholder')"
             />
           </FormGroup>
@@ -444,7 +443,6 @@ onMounted(async () => {
             <PasswordField
               :id="id"
               v-model="store.secretos.cifradoRepetida"
-              autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
             />
