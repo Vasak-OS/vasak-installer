@@ -6,6 +6,7 @@ import {
 	FormGroup,
 	PageHeader,
 	Panel,
+	PasswordField,
 	ProgressBar,
 	SwitchRow,
 	TextInput,
@@ -227,10 +228,9 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
       <Panel>
         <div class="space-y-3">
           <FormGroup :label="t('cuenta.contrasena')" html-for="clave" :help="t('cuenta.fuerzaAyuda')">
-            <TextInput
+            <PasswordField
               id="clave"
               v-model="store.secretos.usuario"
-              type="password"
               autocomplete="new-password"
             />
             <div class="flex items-center gap-2">
@@ -254,10 +254,9 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             html-for="clave2"
             :error="passwordsDiffer ? t('cuenta.contrasenasDistintas') : ''"
           >
-            <TextInput
+            <PasswordField
               :id="id"
               v-model="store.secretos.usuarioRepetida"
-              type="password"
               autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
@@ -298,10 +297,9 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
 
         <div v-if="store.eleccion.rootHabilitado" class="mt-3 space-y-3">
           <FormGroup :label="t('cuenta.rootContrasena')" html-for="root1">
-            <TextInput
+            <PasswordField
               id="root1"
               v-model="store.secretos.root"
-              type="password"
               autocomplete="new-password"
             />
           </FormGroup>
@@ -311,10 +309,9 @@ const strengthTone = computed(() => STRENGTH_TONE[strength.value]);
             html-for="root2"
             :error="rootPasswordsDiffer ? t('cuenta.contrasenasDistintas') : ''"
           >
-            <TextInput
+            <PasswordField
               :id="id"
               v-model="store.secretos.rootRepetida"
-              type="password"
               autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
