@@ -36,7 +36,19 @@ function aCamello(nombre: string): string {
  * se descartan por tipo.
  */
 function comandosDeRust(): Map<string, string[]> {
-	const fuente = readFileSync('src-tauri/src/commands.rs', 'utf8');
+	// `commands.rs` y, si existen, sus submódulos en `commands/` (ahí vive el
+	// glue de plataforma como `webkit.rs`): un comando registrado en cualquiera
+	// cuenta, o el test lo acusaría de inexistente cuando sí existe.
+	let fuente = readFileSync('src-tauri/src/commands.rs', 'utf8');
+	try {
+		for (const entrada of readdirSync('src-tauri/src/commands')) {
+			if (entrada.endsWith('.rs')) {
+				fuente += `\n${readFileSync(join('src-tauri/src/commands', entrada), 'utf8')}`;
+			}
+		}
+	} catch {
+		// Sin carpeta `commands/`: sólo el archivo.
+	}
 	const comandos = new Map<string, string[]>();
 
 	for (const m of fuente.matchAll(

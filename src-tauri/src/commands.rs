@@ -13,6 +13,8 @@
 //! tiene que poder ver **exactamente** qué particiones se van a crear antes de
 //! que exista un proceso root en la máquina.
 
+pub mod webkit;
+
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -118,7 +120,10 @@ pub fn complementos_disponibles() -> Complementos {
             let preseleccion = complementos::preseleccion(&catalogo, &hw.marcas);
             Complementos {
                 catalogo,
-                categorias: complementos::Categoria::TODAS.iter().map(|c| c.clave()).collect(),
+                categorias: complementos::Categoria::TODAS
+                    .iter()
+                    .map(|c| c.clave())
+                    .collect(),
                 hardware: hw,
                 preseleccion,
                 error: None,
@@ -296,7 +301,10 @@ fn vista_previa_de(disco: &Disco, firmware: Firmware, plan: &layout::Plan) -> Vi
 /// canal falla después si no autorizó—, pero sí hace trabajo de arranque de
 /// proceso que no tiene por qué ocurrir en el hilo que repinta la ventana.
 #[tauri::command]
-pub async fn preparar_ayudante(app: AppHandle, estado: State<'_, EstadoAyudante>) -> Result<(), String> {
+pub async fn preparar_ayudante(
+    app: AppHandle,
+    estado: State<'_, EstadoAyudante>,
+) -> Result<(), String> {
     let mut guard = estado
         .0
         .lock()
@@ -352,11 +360,10 @@ pub async fn sondear_discos_con_sistemas(
             .clone()
     };
 
-    let data = tauri::async_runtime::spawn_blocking(move || {
-        ayudante.pedir(CuerpoPeticion::SondearDiscos)
-    })
-    .await
-    .map_err(|e| format!("el sondeo de discos se interrumpió: {e}"))??;
+    let data =
+        tauri::async_runtime::spawn_blocking(move || ayudante.pedir(CuerpoPeticion::SondearDiscos))
+            .await
+            .map_err(|e| format!("el sondeo de discos se interrumpió: {e}"))??;
 
     serde_json::from_value(data["discos"].clone())
         .map_err(|e| format!("no se entendió la respuesta del ayudante: {e}"))
@@ -369,10 +376,7 @@ pub async fn sondear_discos_con_sistemas(
 /// `…/fin`. Un comando que se quedara esperando media hora dejaría el hilo del
 /// IPC tomado y la ventana sin poder ni siquiera mostrar el progreso.
 #[tauri::command]
-pub fn instalar(
-    plan: PlanInstalacion,
-    estado: State<'_, EstadoAyudante>,
-) -> Result<(), String> {
+pub fn instalar(plan: PlanInstalacion, estado: State<'_, EstadoAyudante>) -> Result<(), String> {
     // Se vuelve a validar acá aunque el frontend ya lo haya hecho: lo que el
     // frontend valida es para poder decirlo mientras se escribe, y esta es la
     // comprobación que decide. Un nombre inválido que pase de acá lo rechaza
@@ -623,7 +627,9 @@ mod tests {
             en_uso: false,
             particiones: Vec::new(),
         };
-        let plan = layout::planificar_borrando(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true).unwrap();
+        let plan =
+            layout::planificar_borrando(&disco, Firmware::Uefi, SistemaArchivos::Btrfs, true)
+                .unwrap();
         let vista = vista_previa_de(&disco, Firmware::Uefi, &plan);
 
         assert!(!vista.particiones[0].cifrada, "el ESP nunca va cifrado");

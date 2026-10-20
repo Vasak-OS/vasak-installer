@@ -73,6 +73,7 @@ pub fn run() {
             commands::cancelar_instalacion,
             commands::reiniciar,
             commands::apagar,
+            commands::webkit::tune_webview,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación");

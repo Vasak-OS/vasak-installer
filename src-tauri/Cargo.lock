@@ -4183,7 +4183,7 @@ dependencies = [
 
 [[package]]
 name = "vasak-installer"
-version = "0.14.5"
+version = "0.14.6"
 dependencies = [
  "gtk",
  "libc",
@@ -4201,6 +4201,7 @@ dependencies = [
  "tauri-plugin-vsk-journal",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
+ "webkit2gtk",
 ]
 
 [[package]]
