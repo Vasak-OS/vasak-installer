@@ -1,6 +1,6 @@
 [package]
 name = "vasak-installer"
-version = "0.14.5"
+version = "0.14.6"
 description = "Instalador de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -54,7 +54,10 @@ tauri-plugin-vsk-contextual-menu = "2"
 tauri-plugin-shell = "2"
 
 # Para la ventana sin decoración: la barra propia necesita mover y redimensionar.
+# Y para bajar al `WebKitWebView` y afinarlo (ver `commands/webkit.rs`). Las dos
+# enlazan libs que la ventana Tauri ya trae (libgtk-3, libwebkit2gtk).
 gtk = "0.18"
+webkit2gtk = "2.0"
 tauri-plugin-vsk-journal = "2"
 
 # Sólo por `getuid()` en el ayudante, para negarse a arrancar sin privilegios con

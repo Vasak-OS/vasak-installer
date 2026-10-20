@@ -141,6 +141,10 @@ const windowControls = computed<ControlDeVentana[]>(() =>
 );
 
 onMounted(async () => {
+	// Afina el WebKit de la ventana para bajar su consumo; si falla no debe
+	// frenar el arranque de la pantalla.
+	invoke('tune_webview').catch(() => {});
+
 	// El tema y los iconos del escritorio, como cualquier aplicación de VasakOS.
 	// Importa más acá que en otras: esta es la primera pantalla que alguien ve
 	// del sistema, y si no se parece al escritorio que la rodea, parece ajena.
