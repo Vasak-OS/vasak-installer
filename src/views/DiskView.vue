@@ -11,9 +11,9 @@ import {
 	type OptionGroupOption,
 	PageHeader,
 	Panel,
+	PasswordField,
 	SelectField,
 	SwitchRow,
-	TextInput,
 	ThemeIcon,
 } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, watch } from 'vue';
@@ -428,11 +428,9 @@ onMounted(async () => {
           </AlertMessage>
 
           <FormGroup :label="t('disco.frase')" html-for="frase">
-            <TextInput
+            <PasswordField
               id="frase"
               v-model="store.secretos.cifrado"
-              type="password"
-              autocomplete="new-password"
               :placeholder="t('disco.frasePlaceholder')"
             />
           </FormGroup>
@@ -442,11 +440,9 @@ onMounted(async () => {
             html-for="frase2"
             :error="passphrasesDiffer ? t('disco.frasesDistintas') : ''"
           >
-            <TextInput
+            <PasswordField
               :id="id"
               v-model="store.secretos.cifradoRepetida"
-              type="password"
-              autocomplete="new-password"
               :invalid="invalid"
               :described-by="describedBy"
             />
