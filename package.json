@@ -1,7 +1,7 @@
 {
   "name": "vasak-installer",
   "private": true,
-  "version": "0.14.6",
+  "version": "0.14.7",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -25,7 +25,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-shell": "^2.5.0",
-    "@vasakgroup/plugin-config-manager": "^2.12.1",
+    "@vasakgroup/plugin-config-manager": "^2.13.0",
     "@vasakgroup/plugin-vicons": "^2.2.2",
     "@vasakgroup/plugin-vsk-contextual-menu": "^2.0.3",
     "@vasakgroup/plugin-vsk-journal": "^2.0.1",
