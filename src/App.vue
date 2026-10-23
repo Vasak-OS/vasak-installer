@@ -17,6 +17,7 @@ import {
 } from '@/stores/instalacion';
 import { APP_ICON, BACK_ICON, STEP_LIST_ICON } from '@/tools/icons';
 import { interpolar } from '@/tools/interpolar';
+import { saveTheme } from '@/tools/theme-cache';
 import AccountView from '@/views/AccountView.vue';
 import AddonsView from '@/views/AddonsView.vue';
 import DiskView from '@/views/DiskView.vue';
@@ -150,10 +151,10 @@ onMounted(async () => {
 	// del sistema, y si no se parece al escritorio que la rodea, parece ajena.
 	try {
 		const configStore = useConfigStore();
-		await configStore.loadConfig();
+		await configStore.loadConfig().then(() => saveTheme());
 		unlisteners.value.push(
 			await listen('config-changed', () => {
-				document.startViewTransition(() => configStore.loadConfig());
+				document.startViewTransition(() => configStore.loadConfig().then(() => saveTheme()));
 			})
 		);
 	} catch (error) {
