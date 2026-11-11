@@ -146,9 +146,6 @@ teclado:
   distribucion: Distribución
   prueba: Probá tu teclado acá
   pruebaPlaceholder: Escribí algo con acentos y símbolos
-  avisoNoAplica: >-
-    La distribución elegida se aplica al sistema instalado, no a esta ventana.
-    Para probarla de verdad, cambiala desde el panel del escritorio.
 
 disco:
   titulo: Dónde se instala

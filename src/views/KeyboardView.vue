@@ -1,13 +1,8 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import {
-	AlertMessage,
-	ConfigSection,
-	PageHeader,
-	SearchSelect,
-	TextInput,
-} from '@vasakgroup/vue-libvasak';
-import { computed, ref } from 'vue';
+import { ConfigSection, PageHeader, SearchSelect, TextInput } from '@vasakgroup/vue-libvasak';
+import { computed, ref, watch } from 'vue';
 import { useInstalacionStore } from '@/stores/instalacion';
 import { STEP_ICONS } from '@/tools/icons';
 
@@ -26,6 +21,20 @@ const options = computed(() =>
 	store.catalogos.teclados.map((layout) => ({ valor: layout, etiqueta: layout }))
 );
 const noLayouts = computed(() => store.catalogos.teclados.length === 0);
+
+/**
+ * Aplicar la distribución elegida al compositor que dibuja esta ventana, para
+ * que el campo de prueba escriba de verdad con ese teclado y nadie tenga que
+ * editar `wayfire.ini` a mano. No es fatal si falla: la elección igual viaja al
+ * sistema instalado por otro camino.
+ */
+watch(
+	() => store.eleccion.teclado,
+	(teclado) => {
+		if (teclado) void invoke('aplicar_teclado_en_vivo', { teclado });
+	},
+	{ immediate: true }
+);
 </script>
 
 <template>
@@ -53,14 +62,6 @@ const noLayouts = computed(() => store.catalogos.teclados.length === 0);
       <ConfigSection :title="t('teclado.prueba')" as="h2">
         <TextInput v-model="sample" :placeholder="t('teclado.pruebaPlaceholder')" />
       </ConfigSection>
-
-      <!--
-        Honestidad sobre lo que este campo puede y no puede probar: la
-        distribución elegida se aplica al sistema instalado, no al compositor que
-        está dibujando esta ventana. Sin decirlo, alguien tipea, ve que sale
-        `us`, y cree que el instalador ignoró su elección.
-      -->
-      <AlertMessage tone="info" icon="auto">{{ t('teclado.avisoNoAplica') }}</AlertMessage>
     </div>
   </div>
 </template>
