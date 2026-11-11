@@ -75,7 +75,14 @@ export function nombreDeIdioma(local: string, locale: string): string {
 	// locales del sistema, que es como vienen de glibc.
 	const etiqueta = local.replaceAll('_', '-');
 	try {
-		const idiomas = new Intl.DisplayNames([locale], { type: 'language' });
+		// `languageDisplay: 'standard'` fuerza el patrón «Idioma (Región)». Sin él,
+		// CLDR usa nombres de dialecto para unos pocos locales (`es_ES` → «European
+		// Spanish», `es_MX` → «Mexican Spanish») que rompen el patrón de las demás
+		// variantes y no se encuentran buscando el idioma (#93).
+		const idiomas = new Intl.DisplayNames([locale], {
+			type: 'language',
+			languageDisplay: 'standard',
+		});
 		const nombre = idiomas.of(etiqueta);
 		return nombre && nombre !== etiqueta ? nombre : local;
 	} catch {
