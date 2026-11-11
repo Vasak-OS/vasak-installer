@@ -58,6 +58,7 @@ pub fn run() {
             commands::sondear_sistema,
             commands::sondear_discos,
             commands::catalogos,
+            commands::aplicar_teclado_en_vivo,
             commands::complementos_disponibles,
             commands::pasos_de_instalacion,
             commands::puntos_de_montaje,

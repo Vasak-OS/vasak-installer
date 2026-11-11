@@ -146,9 +146,6 @@ teclado:
   distribucion: Layout
   prueba: Try your keyboard here
   pruebaPlaceholder: Type something with accents and symbols
-  avisoNoAplica: >-
-    The layout you pick applies to the installed system, not to this window. To
-    really try it out, change it from the desktop panel.
 
 disco:
   titulo: Where it gets installed

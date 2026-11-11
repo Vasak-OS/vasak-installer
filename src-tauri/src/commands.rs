@@ -28,6 +28,7 @@ use crate::protocol::{
     AsignacionManual, CuerpoPeticion, EsquemaDisco, Paso, PlanInstalacion, SistemaArchivos,
 };
 use crate::sidecar::Ayudante;
+use crate::teclado;
 use crate::validar::{self, ErrorNombre, Fuerza};
 
 /// El ayudante, si ya se lanzó.
@@ -149,6 +150,33 @@ pub fn catalogos() -> Catalogos {
         idiomas: probe::idiomas(),
         teclados: probe::teclados(),
     }
+}
+
+/// Aplica el teclado elegido a la sesión viva, para que el campo de prueba
+/// escriba de verdad con ese diseño y nadie tenga que editar `wayfire.ini` a
+/// mano.
+///
+/// Escribe el diseño XKB —la misma traducción que recibe el sistema instalado—
+/// en el `wayfire.ini` del usuario. Wayfire recarga el archivo solo, así que el
+/// cambio se aplica sin reiniciar. Devuelve el diseño que quedó.
+///
+/// No es fatal si falla (p.ej. no existe el `.ini`): la elección igual viaja al
+/// sistema instalado por otro camino, así que el frontend puede ignorar el
+/// error. No se crea el archivo si no está: un `wayfire.ini` a medias sobre un
+/// Wayfire corriendo le voltearía el escritorio.
+#[tauri::command]
+pub fn aplicar_teclado_en_vivo(teclado: String) -> Result<String, String> {
+    let (diseño, variante) = match teclado::traducir(&teclado, &teclado::diseños_de_xkb()) {
+        Ok(par) | Err(par) => par,
+    };
+    let home = std::env::var_os("HOME").ok_or("no hay HOME")?;
+    let ruta = std::path::Path::new(&home).join(".config/wayfire.ini");
+    let contenido = std::fs::read_to_string(&ruta).map_err(|e| e.to_string())?;
+    let nuevo = teclado::fijar_xkb_en_input(&contenido, &diseño, &variante);
+    if nuevo != contenido {
+        std::fs::write(&ruta, nuevo).map_err(|e| e.to_string())?;
+    }
+    Ok(diseño)
 }
 
 /// Los pasos de la instalación, en orden, como claves de traducción.
