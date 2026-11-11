@@ -76,6 +76,27 @@ describe('nombreDeIdioma', () => {
 		expect(nombreDeIdioma('pt_BR', 'en')).not.toBe('pt_BR');
 	});
 
+	test('el español de España sigue el patrón «Idioma (Región)» en inglés (#93)', () => {
+		const nombre = nombreDeIdioma('es_ES', 'en');
+		expect(nombre).toBe('Spanish (Spain)');
+		expect(nombre).not.toContain('European');
+	});
+
+	test('el español de España sigue el patrón «Idioma (Región)» en español (#93)', () => {
+		const nombre = nombreDeIdioma('es_ES', 'es');
+		expect(nombre).toBe('Español (España)');
+		expect(nombre).not.toContain('de España');
+	});
+
+	test('los demás dialectos con nombre propio en CLDR también usan el patrón estándar', () => {
+		expect(nombreDeIdioma('es_MX', 'en')).toBe('Spanish (Mexico)');
+		expect(nombreDeIdioma('es_419', 'en')).toBe('Spanish (Latin America)');
+	});
+
+	test('una variante que ya era estándar no cambia', () => {
+		expect(nombreDeIdioma('es_AR', 'en')).toBe('Spanish (Argentina)');
+	});
+
 	test('un local que Intl no conoce vuelve tal cual', () => {
 		// Un código es peor que un nombre y muchísimo mejor que una excepción o
 		// una fila vacía en el desplegable.
